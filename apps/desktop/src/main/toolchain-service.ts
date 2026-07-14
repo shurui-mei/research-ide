@@ -379,8 +379,10 @@ export class ToolchainService {
    */
   async prepareCodexBridge(): Promise<CodexToolchainBridge> {
     await this.projects.assertMetadataIntegrity();
-    await this.ensureDetected();
     const bridgeRoot = await this.ensureCodexBridgeRoot();
+    // Validate the application-owned bridge before doing any potentially slow
+    // tool discovery. A redirected bridge must fail closed immediately.
+    await this.ensureDetected();
     const selected = (await this.list()).filter((tool) => tool.selected && tool.status === 'ready' && tool.path);
     const desired = new Map<string, { executable: string; environment: NodeJS.ProcessEnv }>();
     const tools: CodexToolchainBridge['tools'] = [];

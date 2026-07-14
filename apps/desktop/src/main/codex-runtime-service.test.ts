@@ -25,6 +25,16 @@ afterEach(async () => {
 
 function digest(value: Buffer): string { return createHash('sha256').update(value).digest('hex'); }
 
+function currentRuntimeTarget(): NonNullable<ReturnType<typeof codexRuntimeInternals.runtimeTarget>> {
+  const target = codexRuntimeInternals.runtimeTarget(process.platform, process.arch);
+  if (!target) throw new Error(`Unsupported Codex test target: ${process.platform}-${process.arch}`);
+  return target;
+}
+
+function installedExecutableName(): string {
+  return process.platform === 'win32' ? 'codex.exe' : 'codex';
+}
+
 function tarGz(name: string, content: Buffer, type = '0'): Buffer {
   const header = Buffer.alloc(512);
   header.write(name, 0, 100, 'utf8');
@@ -84,10 +94,10 @@ describe('Codex runtime resolution and trust', () => {
   it('discovers a system CLI and preserves the existing CODEX_HOME without writing runtime state', async () => {
     const root = await temporaryRoot('research-ide-codex-system-');
     const bin = path.join(root, 'bin'); await mkdir(bin);
-    const executable = path.join(bin, 'codex'); await writeFile(executable, 'system codex', 'utf8'); await chmod(executable, 0o700);
+    const executable = path.join(bin, installedExecutableName()); await writeFile(executable, 'system codex', 'utf8'); await chmod(executable, 0o700);
     const codexHome = path.join(root, 'existing-codex-home');
     const service = new CodexRuntimeService(path.join(root, 'user-data'), () => undefined, {
-      platform: 'linux', arch: 'x64', environment: { PATH: bin, CODEX_HOME: codexHome },
+      platform: process.platform, arch: process.arch, environment: { PATH: bin, CODEX_HOME: codexHome },
       readVersion: async () => 'codex-cli 1.0.0',
     });
 
@@ -162,15 +172,20 @@ describe('managed Codex runtime installation', () => {
   it('installs and updates verified releases in isolated version directories without touching system Codex or CODEX_HOME', async () => {
     const root = await temporaryRoot('research-ide-codex-managed-');
     const bin = path.join(root, 'bin'); await mkdir(bin);
-    const systemCli = path.join(bin, 'codex'); await writeFile(systemCli, 'codex-cli 0.9.0'); await chmod(systemCli, 0o700);
+    const installedName = installedExecutableName();
+    const target = currentRuntimeTarget();
+    const systemCli = path.join(bin, installedName); await writeFile(systemCli, 'codex-cli 0.9.0'); await chmod(systemCli, 0o700);
     const executables = new Map([
       ['1.2.3', Buffer.from('codex-cli 1.2.3')],
       ['1.3.0', Buffer.from('codex-cli 1.3.0')],
     ]);
-    const assets = new Map([...executables].map(([version, bytes]) => [version, tarGz('codex-x86_64-unknown-linux-musl', bytes)]));
+    const assets = new Map([...executables].map(([version, bytes]) => [
+      version,
+      target.assetName.endsWith('.tar.gz') ? tarGz(target.executableName, bytes) : bytes,
+    ]));
     const releases = [...assets.entries()].reverse().map(([version, bytes]) => ({
-      version, assetName: 'codex-x86_64-unknown-linux-musl.tar.gz',
-      downloadUrl: `https://github.com/openai/codex/releases/download/rust-v${version}/codex-x86_64-unknown-linux-musl.tar.gz`,
+      version, assetName: target.assetName,
+      downloadUrl: `https://github.com/openai/codex/releases/download/rust-v${version}/${target.assetName}`,
       sha256: digest(bytes), size: bytes.length,
     }));
     const provider: CodexRuntimeCatalogProvider = { load: async () => releases };
@@ -184,15 +199,15 @@ describe('managed Codex runtime installation', () => {
     const codexHome = path.join(root, 'codex-home');
     const events: string[] = [];
     const service = new CodexRuntimeService(path.join(root, 'user-data'), (event) => events.push(event.phase), {
-      platform: 'linux', arch: 'x64', environment: { PATH: bin, CODEX_HOME: codexHome }, provider, fetchImpl: fetchMock,
+      platform: process.platform, arch: process.arch, environment: { PATH: bin, CODEX_HOME: codexHome }, provider, fetchImpl: fetchMock,
       readVersion: async (candidate) => readFile(candidate, 'utf8'),
     });
 
     await expect(service.install('1.2.3')).resolves.toMatchObject({ state: 'ready', active: { source: 'managed', version: '1.2.3' }, system: { version: '0.9.0' } });
     await expect(service.update()).resolves.toMatchObject({ state: 'ready', active: { source: 'managed', version: '1.3.0' } });
     expect(await readFile(systemCli, 'utf8')).toBe('codex-cli 0.9.0');
-    expect(await readFile(path.join(root, 'user-data', 'codex-runtime', 'versions', '1.2.3', 'codex'), 'utf8')).toBe('codex-cli 1.2.3');
-    expect(await readFile(path.join(root, 'user-data', 'codex-runtime', 'versions', '1.3.0', 'codex'), 'utf8')).toBe('codex-cli 1.3.0');
+    expect(await readFile(path.join(root, 'user-data', 'codex-runtime', 'versions', '1.2.3', installedName), 'utf8')).toBe('codex-cli 1.2.3');
+    expect(await readFile(path.join(root, 'user-data', 'codex-runtime', 'versions', '1.3.0', installedName), 'utf8')).toBe('codex-cli 1.3.0');
     expect(await readFile(path.join(root, 'user-data', 'codex-runtime', 'selection.json'), 'utf8')).not.toContain(codexHome);
     await expect(service.resolveCommand()).resolves.toMatchObject({ environment: { CODEX_HOME: codexHome } });
     expect(events).toContain('verifying'); expect(events).toContain('completed');

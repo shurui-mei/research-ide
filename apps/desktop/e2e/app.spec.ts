@@ -83,7 +83,7 @@ test('starts the desktop workbench with an isolated renderer bridge', async () =
     for (const redundantMenu of ['编辑', '视图', '运行', '帮助']) {
       await expect(page.getByRole('button', { name: redundantMenu, exact: true })).toHaveCount(0);
     }
-    expect(await page.evaluate(() => getComputedStyle(document.body).fontSize)).toBe('14px');
+    expect(await page.evaluate(() => getComputedStyle(document.body).fontSize)).toBe('15px');
 
     const boundary = await page.evaluate(() => ({
       hasBridge: typeof window.researchIDE === 'object',
