@@ -17,6 +17,7 @@ interface Fixture {
 
 const fixtures: Fixture[] = [];
 const originalPath = process.env.PATH;
+const POSIX_SYSTEM_TOOLS = ['latexmk', 'python3', 'R', 'pandoc', 'cc', 'julia'] as const;
 
 async function fixture(managedOptions?: ManagedToolchainOptions): Promise<Fixture> {
   const base = await mkdtemp(path.join(tmpdir(), 'research-ide-toolchains-'));
@@ -29,6 +30,17 @@ async function fixture(managedOptions?: ManagedToolchainOptions): Promise<Fixtur
   const result = { base, root: summary.path, userData, projects, toolchains };
   fixtures.push(result);
   return result;
+}
+
+async function fastSystemToolPath(base: string): Promise<string> {
+  const bin = path.join(base, 'system-bin');
+  await mkdir(bin);
+  for (const command of POSIX_SYSTEM_TOOLS) {
+    const executable = path.join(bin, command);
+    await writeFile(executable, '#!/bin/sh\nprintf "trusted-system 1.0\\n"\n', 'utf8');
+    await chmod(executable, 0o700);
+  }
+  return bin;
 }
 
 afterEach(async () => {
@@ -105,7 +117,7 @@ describe('automatic project toolchain detection', () => {
     const bin = path.join(base, 'bin');
     const probes = path.join(base, 'probes.log');
     await mkdir(bin);
-    for (const command of ['latexmk', 'python3', 'R', 'pandoc', 'cc', 'julia']) {
+    for (const command of POSIX_SYSTEM_TOOLS) {
       const executable = path.join(bin, command);
       await writeFile(executable, `#!/bin/sh\nprintf 'probe\\n' >> '${probes}'\nprintf 'test-tool 1.0\\n'\n`, 'utf8');
       await chmod(executable, 0o700);
@@ -124,15 +136,9 @@ describe('automatic project toolchain detection', () => {
 
   it.skipIf(process.platform === 'win32')('does not execute an unconfirmed custom path from project.toml', async () => {
     const { base, root, projects, toolchains } = await fixture();
-    const bin = path.join(base, 'bin');
+    const bin = await fastSystemToolPath(base);
     const sentinel = path.join(base, 'untrusted-ran');
     const executable = path.join(base, 'untrusted-python');
-    await mkdir(bin);
-    for (const command of ['latexmk', 'python3', 'R', 'pandoc', 'cc', 'julia']) {
-      const systemTool = path.join(bin, command);
-      await writeFile(systemTool, '#!/bin/sh\nprintf "trusted-system 1.0\\n"\n', 'utf8');
-      await chmod(systemTool, 0o700);
-    }
     await writeFile(executable, `#!/bin/sh\nprintf 'ran' > '${sentinel}'\nprintf 'untrusted 1.0\\n'\n`, 'utf8');
     await chmod(executable, 0o700);
     const configPath = path.join(root, '.research_ide', 'project.toml');
@@ -153,8 +159,8 @@ describe('automatic project toolchain detection', () => {
   });
 
   it('persists a picker-confirmed executable as a safe structured project binding', async () => {
-    const { root, userData, projects, toolchains } = await fixture();
-    process.env.PATH = '';
+    const { base, root, userData, projects, toolchains } = await fixture();
+    process.env.PATH = process.platform === 'win32' ? '' : await fastSystemToolPath(base);
     toolchains.beginProjectSession();
 
     const selected = await toolchains.selectExecutable('python', process.execPath);
@@ -179,7 +185,7 @@ describe('automatic project toolchain detection', () => {
     const sentinel = path.join(base, 'replacement-ran');
     await writeFile(executable, '#!/bin/sh\nprintf "selected 1.0\\n"\n', 'utf8');
     await chmod(executable, 0o700);
-    process.env.PATH = '';
+    process.env.PATH = await fastSystemToolPath(base);
     toolchains.beginProjectSession();
     await toolchains.selectExecutable('python', executable);
 
@@ -196,8 +202,7 @@ describe('automatic project toolchain detection', () => {
 
   it.skipIf(process.platform === 'win32')('persists an explicitly selected system PATH tool', async () => {
     const { base, root, toolchains } = await fixture();
-    const bin = path.join(base, 'bin');
-    await mkdir(bin);
+    const bin = await fastSystemToolPath(base);
     const executable = path.join(bin, 'python3');
     await writeFile(executable, '#!/bin/sh\nprintf "system-python 3.13\\n"\n', 'utf8');
     await chmod(executable, 0o700);
@@ -213,8 +218,7 @@ describe('automatic project toolchain detection', () => {
 
   it.skipIf(process.platform === 'win32')('can replace a blocked custom binding with a detected system tool', async () => {
     const { base, root, projects, toolchains } = await fixture();
-    const bin = path.join(base, 'bin');
-    await mkdir(bin);
+    const bin = await fastSystemToolPath(base);
     const systemPython = path.join(bin, 'python3');
     await writeFile(systemPython, '#!/bin/sh\nprintf "system-python 3.13\\n"\n', 'utf8');
     await chmod(systemPython, 0o700);
@@ -249,8 +253,8 @@ describe('automatic project toolchain detection', () => {
         return { code: 0, stdout: '', stderr: '' };
       },
     };
-    const { root, toolchains } = await fixture(managedOptions);
-    process.env.PATH = '';
+    const { base, root, toolchains } = await fixture(managedOptions);
+    process.env.PATH = await fastSystemToolPath(base);
     toolchains.beginProjectSession();
 
     const prepared = await toolchains.prepareManagedInstallation('python', '3.13.7');
