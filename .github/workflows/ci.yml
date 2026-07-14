@@ -21,7 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
+        # Forge 7's transitive @electron/node-gyp cannot yet detect Visual
+        # Studio 2026 on windows-latest. Keep native-module builds on VS 2022.
+        os: [ubuntu-latest, windows-2022, macos-15]
 
     steps:
       - name: Check out source
@@ -52,6 +54,10 @@ jobs:
         run: pnpm test
 
       - name: Package unpacked application
+        env:
+          # The arm64 macOS runner gives Node a ~2 GB default heap, which is
+          # too small for the Monaco/PDF.js production bundle and sourcemaps.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm package
 
       - name: Electron E2E (Linux)
