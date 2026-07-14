@@ -32,6 +32,18 @@ Research IDE 现在只在 Linux 上自动恢复可严格证明为陈旧的锁：
 
 Windows 主入口在载入 SQLite 和完整 IDE 服务前处理 Squirrel 的 install、updated、uninstall 和 obsolete 参数，并使用与 `name = research_ide` 一致的 `com.squirrel.research_ide.research-ide` AppUserModelId。macOS DMG 和 Windows Squirrel 正式发布前仍须分别配置 Developer ID/公证与 Authenticode；证书只从 CI secret 注入。
 
+## 现有安装与更新语义
+
+各平台使用固定且不可随版本变化的应用身份：Windows Squirrel package 为 `research_ide`、AppUserModelId 为 `com.squirrel.research_ide.research-ide`；macOS bundle id 为 `org.researchide.desktop`；DEB/RPM package 为 `research-ide`。安装包内的 `install-manifest.json` 同时记录这些身份和应用版本，`pnpm verify:release` 会拒绝根包、桌面包、安装 manifest 或 release tag 之间的版本不一致。改变这些身份会变成并行安装而不是更新，因此必须作为显式迁移项目处理，不能在普通版本升级中修改。
+
+- **Windows Squirrel**：运行较新 `ResearchIDE-Setup.exe` 时，Squirrel 按固定 package identity 处理已有安装并就地更新。Squirrel 启动的 `--squirrel-install` 与 `--squirrel-updated` 会分别写入应用数据下的 `logs/startup.log`，随后只处理快捷方式并退出；它们不会加载完整 IDE、SQLite、项目服务或科研文件。stock Squirrel Setup 不提供由本应用定制的“检测到旧版，是否更新”页面，因此 Research IDE 不伪造这一选择。用户以启动新版 Setup 明确发起更新。
+- **macOS DMG**：同名 `.app` 和固定 bundle id 让 Finder 在复制到已有位置时使用系统的“替换”确认。DMG 本身没有 Research IDE 自定义安装向导，也不会搜索磁盘上的任意 `.app`。应退出旧版本后替换应用 bundle。
+- **Linux DEB/RPM**：系统包管理器按固定 package name 和包版本识别安装、升级及降级，并负责 `/usr` 下文件所有权。Research IDE 不绕过 apt/dpkg、dnf/rpm 自己覆盖系统安装。ZIP/portable 没有系统安装数据库；为了避免误认或删除任意目录，应用不会扫描磁盘寻找旧 ZIP，用户应关闭应用后替换自己明确选择的旧应用目录。
+
+更新后的首次正常启动会读取 `userData/application-version.json`，以严格 SemVer 比较上次成功记录的运行版本和当前 `app.getVersion()`。升级或降级会显示一次明确提示，随后原子更新这份 Research IDE 所有的状态文件；版本相同不重复提示。降级会额外提醒较新版本的应用状态可能不兼容。这个流程只访问带 `org.researchide.desktop` 所有权标记的应用数据目录，不读取、迁移或删除科研项目，也不会搜索或修改其他程序。项目、设置、会话和本地工具链不会因为安装器替换应用文件而被删除。
+
+当前没有后台更新服务、远程更新源、静默自动下载或自动回滚。GitHub Release 提供的是用户明确下载并运行的安装包；在代码签名、更新元数据签名、数据迁移和回滚测试完成前，不应把 Squirrel 的就地替换能力描述成完整的自动更新系统。
+
 Electron/Forge 不保证任意跨平台交叉构建：
 
 - DMG 必须在 macOS 上制作；

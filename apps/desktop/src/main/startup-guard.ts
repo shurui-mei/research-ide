@@ -9,8 +9,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { DISTRIBUTION_IDENTITY } from '../shared/distribution';
 
-export const RESEARCH_IDE_INSTALL_ID = 'org.researchide.desktop';
+export const RESEARCH_IDE_INSTALL_ID = DISTRIBUTION_IDENTITY.installId;
 export const APP_DATA_MARKER_NAME = '.research-ide-app-data.json';
 
 interface FileIdentity {

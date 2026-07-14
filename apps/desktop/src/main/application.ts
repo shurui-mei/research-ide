@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { registerIpc, type MainServices } from './ipc';
+import { recordApplicationVersion, type ApplicationVersionTransition } from './install-lifecycle';
 import { recoverStaleLinuxSingleton, StartupLogger } from './startup-guard';
 
 let mainWindow: BrowserWindow | undefined;
@@ -11,6 +12,7 @@ let quitAfterWindowClose = false;
 let finalQuit = false;
 let startupFailureShown = false;
 let startupLogger: StartupLogger | undefined;
+let applicationVersionTransition: ApplicationVersionTransition | undefined;
 const productionIndex = path.resolve(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
 const nativeSmokeTest = process.argv.includes('--research-ide-native-smoke');
 
@@ -102,7 +104,35 @@ function createWindow(): void {
   });
 }
 
+function showApplicationVersionTransition(): void {
+  const transition = applicationVersionTransition;
+  if (!transition || (transition.kind !== 'upgrade' && transition.kind !== 'downgrade')) return;
+  const upgraded = transition.kind === 'upgrade';
+  void dialog.showMessageBox({
+    type: upgraded ? 'info' : 'warning',
+    title: upgraded ? 'Research IDE 已更新' : '检测到 Research IDE 降级',
+    message: upgraded
+      ? `Research IDE 已从 ${transition.previousVersion} 更新到 ${transition.currentVersion}`
+      : `Research IDE 已从 ${transition.previousVersion} 降级到 ${transition.currentVersion}`,
+    detail: upgraded
+      ? '安装流程只替换 Research IDE 应用文件；科研项目、应用设置、会话和本地工具链均保留。'
+      : '安装流程没有删除科研项目或其他程序数据。较新版本创建的应用状态可能不兼容旧版本；如遇问题，请重新安装较新版本。',
+    buttons: ['知道了'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  }).catch(() => undefined);
+}
+
 async function startApplication(): Promise<void> {
+  const userDataPath = app.getPath('userData');
+  try {
+    applicationVersionTransition = recordApplicationVersion(userDataPath, app.getVersion());
+    logStartup('application-version-transition', { ...applicationVersionTransition });
+  } catch (error) {
+    applicationVersionTransition = undefined;
+    logStartup('application-version-state-unavailable', { detail: error instanceof Error ? error.message : 'unknown error' });
+  }
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (!isApplicationUrl(details.url)) { callback({ responseHeaders: details.responseHeaders }); return; }
     const devConnect = MAIN_WINDOW_VITE_DEV_SERVER_URL ? ` ${new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin} ws: wss:` : '';
@@ -113,6 +143,7 @@ async function startApplication(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   createWindow();
+  showApplicationVersionTransition();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 }
 

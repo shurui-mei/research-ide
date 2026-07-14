@@ -20,6 +20,13 @@ afterEach(async () => {
 });
 
 describe('managed toolchain catalog verification', () => {
+  it('describes managed Tectonic as the Unicode and Chinese LaTeX provider', () => {
+    expect(managedToolchainInternals.definitions.latex).toMatchObject({
+      packageName: 'tectonic',
+      displayName: 'Tectonic（Unicode / 中文 LaTeX）',
+    });
+  });
+
   it('uses a versioned LLVM/Clang package instead of the generic compiler metapackage', () => {
     expect(managedToolchainInternals.definitions.compiler).toMatchObject({
       packageName: 'clangxx',

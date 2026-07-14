@@ -129,6 +129,57 @@ export interface CodexStatus {
   detail?: string;
 }
 
+export type CodexRuntimeSource = 'system' | 'imported' | 'managed';
+
+export interface CodexRuntimeDescriptor {
+  source: CodexRuntimeSource;
+  path: string;
+  version: string;
+  sha256?: string;
+  prefixArgs?: string[];
+}
+
+export interface CodexRuntimeManagedVersion {
+  version: string;
+  installedAt: string;
+  selected: boolean;
+  path: string;
+}
+
+export interface CodexRuntimeStatus {
+  state: 'missing' | 'ready' | 'invalid';
+  active?: CodexRuntimeDescriptor;
+  system?: CodexRuntimeDescriptor;
+  managedVersions: CodexRuntimeManagedVersion[];
+  updateAvailable?: string;
+  detail?: string;
+}
+
+export interface CodexRuntimeRelease {
+  version: string;
+  assetName: string;
+  downloadUrl: string;
+  sha256: string;
+  size: number;
+  installed: boolean;
+}
+
+export interface CodexRuntimeCatalog {
+  provider: 'openai-github-releases';
+  sourceUrl: string;
+  platform: string;
+  releases: CodexRuntimeRelease[];
+  warning?: string;
+}
+
+export interface CodexRuntimeEvent {
+  operationId: string;
+  version: string;
+  phase: 'catalog' | 'downloading' | 'verifying' | 'installing' | 'validating' | 'completed' | 'failed';
+  message: string;
+  progress?: number;
+}
+
 export type CodexCapabilityState = 'checking' | 'available' | 'unavailable';
 
 export interface CodexCapabilities {

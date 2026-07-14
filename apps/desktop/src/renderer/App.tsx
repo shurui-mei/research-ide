@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ActivityBar } from './components/ActivityBar';
 import { BackupDialog } from './components/BackupDialog';
 import { BottomPanel } from './components/BottomPanel';
@@ -45,6 +45,8 @@ function App() {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState('');
   const [activity, setActivity] = useState<ActivityView>('explorer');
+  const [codexVisible, setCodexVisible] = useState(false);
+  const [codexWidth, setCodexWidth] = useState(420);
   const [bottomView, setBottomView] = useState<BottomView>('output');
   const [bottomVisible, setBottomVisible] = useState(false);
   const [bottomHeight, setBottomHeight] = useState(190);
@@ -212,6 +214,7 @@ function App() {
     selectTab('');
     setSelectedPath('');
     setActivity('explorer');
+    setCodexVisible(true);
     setOutput([]);
     setProblems([]);
     addLog(`已打开项目 ${summary.name}`, 'success', 'Project');
@@ -251,6 +254,7 @@ function App() {
     selectTab('');
     setTree([]);
     setBottomVisible(false);
+    setCodexVisible(false);
     setCodexAttention(0);
     setCodexReady(false);
   }
@@ -447,6 +451,32 @@ function App() {
     window.addEventListener('pointerup', up);
   }
 
+  function beginCodexResize(event: React.PointerEvent) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = codexWidth;
+    const move = (next: PointerEvent) => {
+      const maximum = Math.max(340, Math.min(720, window.innerWidth - 520));
+      setCodexWidth(Math.max(340, Math.min(maximum, startWidth + startX - next.clientX)));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  const changeActivity = useCallback((view: ActivityView) => {
+    if (view === 'codex') {
+      setCodexVisible((current) => !current);
+      setCodexAttention(0);
+      return;
+    }
+    setActivity(view);
+  }, []);
+
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
       const modifier = event.metaKey || event.ctrlKey;
@@ -474,9 +504,9 @@ function App() {
     { id: 'project.open', label: '项目：打开项目', detail: '选择本地文件夹', icon: 'folderOpen', shortcut: '⌘O', run: () => void openProjectDialog() },
     { id: 'file.save', label: '文件：保存当前文件', icon: 'save', shortcut: '⌘S', disabled: !activeTab?.dirty, run: () => { if (activeTab) void saveTab(activeTab.id).catch(() => undefined); } },
     { id: 'latex.compile', label: 'LaTeX：编译当前文档', detail: '输出将显示在底部面板', icon: 'play', disabled: activeTab?.language !== 'latex', run: () => activeTab && void compileLatex(activeTab) },
-    { id: 'view.codex', label: '视图：打开 Codex', detail: '查看对话与审批队列', icon: 'sparkles', run: () => setActivity('codex') },
+    { id: 'view.codex', label: '视图：打开 Codex', detail: '在右侧查看对话与审批队列', icon: 'sparkles', run: () => setCodexVisible(true) },
     { id: 'view.literature', label: '视图：打开文献管理', icon: 'book', run: () => setActivity('literature') },
-    { id: 'view.tools', label: '视图：打开工具链', icon: 'tools', run: () => setActivity('toolchains') },
+    { id: 'view.tools', label: '视图：打开工具箱', icon: 'tools', run: () => setActivity('toolchains') },
     { id: 'project.snapshot', label: '项目：创建或恢复快照', icon: 'history', disabled: !project, run: () => setBackupsOpen(true) },
     { id: 'panel.toggle', label: '视图：切换底部面板', icon: 'panel', shortcut: '⌘`', run: () => toggleBottom() },
     { id: 'project.close', label: '项目：关闭当前项目', icon: 'close', disabled: !project, run: () => void closeProject() },
@@ -514,13 +544,13 @@ function App() {
     <div className="app-shell">
       <TitleBar onCommandPalette={() => setPaletteMode('commands')} onNewProject={() => setNewProjectOpen(true)} onOpenProject={openProjectDialog} onSave={() => { if (activeTab) void saveTab(activeTab.id).catch(() => undefined); }} project={project} />
       {project ? (
-        <div className={`workbench ${activity === 'codex' ? 'codex-view' : ''}`}>
-          <ActivityBar active={activity} codexAttention={codexAttention > 0} onChange={setActivity} onSettings={() => setSettingsOpen(true)} />
+        <div
+          className={`workbench ${codexVisible ? 'codex-open' : ''}`}
+          style={{ '--codex-width': `${codexWidth}px` } as CSSProperties}
+        >
+          <ActivityBar active={activity} codexAttention={codexAttention > 0} codexOpen={codexVisible} onChange={changeActivity} onSettings={() => setSettingsOpen(true)} />
           <div className="side-panel-host">
             {sidePanel()}
-            <div className={activity === 'codex' ? 'persistent-codex active' : 'persistent-codex'}>
-              <CodexPanel activeFile={activeTab?.virtual ? undefined : activeTab?.path} key={project.id || project.path} onAttentionChange={setCodexAttention} onLog={(message, level) => addLog(message, level, 'Codex')} onReadyChange={setCodexReady} openTabs={tabs} project={project} projectFiles={paletteFiles.map((file) => file.path)} />
-            </div>
           </div>
           <div className="editor-stack">
             <EditorArea
@@ -554,6 +584,27 @@ function App() {
               running={running}
               visible={bottomVisible}
             />
+          </div>
+          <div aria-hidden={!codexVisible} className={`right-codex-host ${codexVisible ? 'open' : ''}`} id="codex-right-panel">
+            <div
+              aria-label="调整 Codex 面板宽度"
+              aria-orientation="vertical"
+              aria-valuemax={720}
+              aria-valuemin={340}
+              aria-valuenow={Math.round(codexWidth)}
+              className="codex-resizer"
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                setCodexWidth((current) => Math.max(340, Math.min(720, current + (event.key === 'ArrowLeft' ? 24 : -24))));
+              }}
+              onPointerDown={beginCodexResize}
+              role="separator"
+              tabIndex={codexVisible ? 0 : -1}
+            />
+            <div className="persistent-codex">
+              <CodexPanel activeFile={activeTab?.virtual ? undefined : activeTab?.path} key={project.id || project.path} onAttentionChange={setCodexAttention} onLog={(message, level) => addLog(message, level, 'Codex')} onReadyChange={setCodexReady} openTabs={tabs} project={project} projectFiles={paletteFiles.map((file) => file.path)} />
+            </div>
           </div>
         </div>
       ) : (

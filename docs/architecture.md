@@ -87,9 +87,9 @@ DOCX 编辑以原 `.docx` 为事实来源，不要求用户先转换为另一种
 
 ## 工具链选择
 
-打开项目后，主进程会为该项目会话在后台执行一次固定候选名单的版本探测；首次打开工具链视图会复用同一个任务，不会重复扫描，探测也不会占用文件保存使用的全局变更队列。解析项目绑定时，`system` 只从继承的 `PATH` 与少量固定系统目录解析（macOS 包括常见 Homebrew、TeX 和 R Framework 位置），`managed` 只允许 Research IDE 用户数据目录下 `toolchains/` 的相对路径，`custom` 只有在用户曾通过系统文件选择器确认同一规范路径且当前 SHA-256 未变化时才可自动绑定，并会在实际运行前再次核对。用户可把系统检测结果设为项目默认；确认后的选择经过 schema 校验并原子写回 `.research_ide/project.toml`。
+打开项目后，主进程会为该项目会话在后台执行一次固定候选名单的版本探测；首次打开工具箱会复用同一个任务，不会重复扫描，探测也不会占用文件保存使用的全局变更队列。解析项目绑定时，`system` 只从继承的 `PATH` 与少量固定系统目录解析（macOS 包括常见 Homebrew、TeX 和 R Framework 位置），`managed` 只允许 Research IDE 用户数据目录下 `toolchains/` 的相对路径，`custom` 只有在用户曾通过系统文件选择器确认同一规范路径且当前 SHA-256 未变化时才可自动绑定，并会在实际运行前再次核对。用户可把系统检测结果设为项目默认；确认后的选择经过 schema 校验并原子写回 `.research_ide/project.toml`。
 
-LaTeX 首先探测系统发行版。工具链面板同时提供类似 Hub 的本地版本列表：当前 provider 以 conda-forge 为软件包来源，以带 GitHub SHA-256 摘要的 Pixi release 为引导管理器，把每个版本安装到用户数据 `toolchains/<tool>/<version>/`。安装记录最后提交，启动和运行前都复核可执行文件哈希；项目配置只保存此目录下的相对路径。系统版本、自定义版本和多个受管版本可以并存，详细边界见 [本地工具链版本中心](managed-toolchains.md)。
+LaTeX 首先探测系统发行版。工具箱同时提供类似 Hub 的本地版本列表：当前 provider 以 conda-forge 为软件包来源，以带 GitHub SHA-256 摘要的 Pixi release 为引导管理器，把每个版本安装到用户数据 `toolchains/<tool>/<version>/`。安装记录最后提交，启动和运行前都复核可执行文件哈希；项目配置只保存此目录下的相对路径。系统版本、自定义版本和多个受管版本可以并存，详细边界见 [本地工具版本中心](managed-toolchains.md)。
 
 ## 界面与策略呈现
 

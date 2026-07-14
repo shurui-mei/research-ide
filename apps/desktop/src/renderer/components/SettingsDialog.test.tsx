@@ -25,12 +25,48 @@ describe('LibreOffice settings', () => {
     });
 
     render(<SettingsDialog onClose={() => undefined} onReveal={() => undefined} project={null} />);
-    fireEvent.click(screen.getByRole('button', { name: '工具链' }));
+    fireEvent.click(screen.getByRole('button', { name: '工具箱' }));
     expect(await screen.findByText('旧版 Word 转换器')).toBeTruthy();
     expect(screen.getByText(/本机未找到 LibreOffice/u)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '选择…' }));
     await waitFor(() => expect(selectLibreOffice).toHaveBeenCalledOnce());
     expect(await screen.findByTitle(/\/opt\/libreoffice\/program\/soffice/u)).toBeTruthy();
+  });
+});
+
+describe('Codex and API settings', () => {
+  it('keeps connection guidance while moving CLI management out of settings', async () => {
+    const libreOffice: LibreOfficeExecutableStatus = { state: 'notConfigured' };
+    const runtimeStatus = vi.fn();
+    const runtimeCatalog = vi.fn();
+    Object.defineProperty(window, 'researchIDE', {
+      configurable: true,
+      value: {
+        documents: {
+          libreOfficeStatus: vi.fn(async () => libreOffice),
+          selectLibreOffice: vi.fn(async () => libreOffice),
+          clearLibreOffice: vi.fn(async () => libreOffice),
+        },
+        codexRuntime: {
+          status: runtimeStatus,
+          catalog: runtimeCatalog,
+          selectExecutable: vi.fn(),
+          install: vi.fn(),
+          update: vi.fn(),
+          clearSelection: vi.fn(),
+          onEvent: vi.fn(() => () => undefined),
+        },
+      },
+    });
+
+    render(<SettingsDialog onClose={() => undefined} onReveal={() => undefined} project={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Codex 与 API' }));
+    expect(await screen.findByText('OpenAI API 与 OpenAI-like API')).toBeTruthy();
+    expect(screen.getByText(/模型与思考强度/u)).toBeTruthy();
+    expect(screen.getByText(/已统一移到左侧“工具箱”/u)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /导入|检查版本|下载并使用/u })).toBeNull();
+    expect(runtimeStatus).not.toHaveBeenCalled();
+    expect(runtimeCatalog).not.toHaveBeenCalled();
   });
 });

@@ -6,12 +6,30 @@ import { TitleBar } from './TitleBar';
 afterEach(cleanup);
 
 describe('workbench navigation controls', () => {
-  it('omits the sidebar search activity while retaining the project activities', () => {
+  it('shows localized names alongside every primary navigation icon', () => {
     render(<ActivityBar active="explorer" onChange={() => undefined} onSettings={() => undefined} />);
+    const navigation = screen.getByRole('navigation', { name: '主要功能' });
     expect(screen.queryByTitle('搜索')).toBeNull();
-    expect(screen.getByTitle('项目')).toBeTruthy();
-    expect(screen.getByTitle('文献')).toBeTruthy();
-    expect(screen.getByTitle('Codex')).toBeTruthy();
+    for (const label of ['文件管理器', '文献管理', '工具箱', 'Codex', '设置']) {
+      const button = screen.getByRole('button', { name: label });
+      expect(button.textContent).toContain(label);
+      expect(button.querySelector('svg')).toBeTruthy();
+    }
+    expect(navigation.querySelector('.sr-only')).toBeNull();
+  });
+
+  it('exposes Codex as an independent right-panel toggle', () => {
+    const onChange = vi.fn();
+    render(<ActivityBar active="explorer" codexOpen onChange={onChange} onSettings={() => undefined} />);
+    const explorer = screen.getByRole('button', { name: '文件管理器' });
+    const codex = screen.getByRole('button', { name: '收起 Codex' });
+    expect(explorer.getAttribute('aria-current')).toBe('page');
+    expect(codex.getAttribute('aria-pressed')).toBe('true');
+    expect(codex.getAttribute('aria-expanded')).toBe('true');
+    expect(codex.getAttribute('aria-controls')).toBe('codex-right-panel');
+    expect(codex.textContent).toContain('Codex');
+    fireEvent.click(codex);
+    expect(onChange).toHaveBeenCalledWith('codex');
   });
 
   it('presents the instruction center as an accessible menu button', () => {

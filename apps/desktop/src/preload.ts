@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import desktopPackage from '../package.json';
 import { IPC } from './shared/ipc';
-import type { CodexEvent, CodexSendInput, CodexStatus, CodexThreadListInput, DocxSaveRequest, DocxSaveResult, LibreOfficeExecutableStatus, ManagedToolchainEvent, ToolEvent, WorkspaceChange } from './shared/types';
+import type { CodexEvent, CodexRuntimeEvent, CodexSendInput, CodexStatus, CodexThreadListInput, DocxSaveRequest, DocxSaveResult, LibreOfficeExecutableStatus, ManagedToolchainEvent, ToolEvent, WorkspaceChange } from './shared/types';
 
 function subscribe<T>(channel: string, listener: (event: T) => void): () => void {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: T): void => listener(payload);
@@ -11,7 +12,7 @@ function subscribe<T>(channel: string, listener: (event: T) => void): () => void
 const api = {
   app: {
     platform: process.platform,
-    version: process.env.npm_package_version ?? '0.1.0',
+    version: desktopPackage.version,
     selectDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC.app.selectDirectory),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.app.openExternal, url),
     revealPath: (path: string): Promise<void> => ipcRenderer.invoke(IPC.app.revealPath, path),
@@ -103,6 +104,15 @@ const api = {
     listModels: () => ipcRenderer.invoke(IPC.codex.listModels),
     updateSettings: (input: { threadId?: string; model?: string; effort?: string }): Promise<CodexStatus> => ipcRenderer.invoke(IPC.codex.updateSettings, input),
     onEvent: (listener: (event: CodexEvent) => void) => subscribe(IPC.codex.event, listener),
+  },
+  codexRuntime: {
+    status: () => ipcRenderer.invoke(IPC.codexRuntime.status),
+    catalog: () => ipcRenderer.invoke(IPC.codexRuntime.catalog),
+    selectExecutable: () => ipcRenderer.invoke(IPC.codexRuntime.selectExecutable),
+    install: (version: string) => ipcRenderer.invoke(IPC.codexRuntime.install, version),
+    update: () => ipcRenderer.invoke(IPC.codexRuntime.update),
+    clearSelection: () => ipcRenderer.invoke(IPC.codexRuntime.clearSelection),
+    onEvent: (listener: (event: CodexRuntimeEvent) => void) => subscribe(IPC.codexRuntime.event, listener),
   },
   diagnostics: { listProblems: () => ipcRenderer.invoke(IPC.diagnostics.list) },
 };

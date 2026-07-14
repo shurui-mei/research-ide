@@ -3,5 +3,12 @@
   "installId": "org.researchide.desktop",
   "kind": "application-installation",
   "productName": "Research IDE",
-  "executableName": "research-ide"
+  "executableName": "research-ide",
+  "version": "0.2.0",
+  "upgradeIdentity": {
+    "windowsSquirrelPackage": "research_ide",
+    "windowsAppUserModelId": "com.squirrel.research_ide.research-ide",
+    "macOSBundleId": "org.researchide.desktop",
+    "linuxPackage": "research-ide"
+  }
 }

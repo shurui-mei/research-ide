@@ -11,14 +11,19 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { chmod, cp, copyFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { DISTRIBUTION_IDENTITY } from './src/shared/distribution';
 
 type RuntimePackage = {
   name?: unknown;
+  version?: unknown;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
 };
 
 const requireFromDesktop = createRequire(path.join(__dirname, 'package.json'));
+const desktopPackage = requireFromDesktop('./package.json') as RuntimePackage;
+if (typeof desktopPackage.version !== 'string') throw new Error('Desktop package version is missing');
+const desktopVersion = desktopPackage.version;
 const copiedRuntimeRoots = ['better-sqlite3'] as const;
 const resourcesRoot = path.resolve(__dirname, 'resources');
 const distributionResources = path.join(resourcesRoot, 'distribution');
@@ -31,12 +36,12 @@ const linuxUninstallDesktop = path.join(repositoryRoot, 'Uninstall Research IDE.
 const productDescription = 'A local-first desktop IDE for scholarly writing, literature, reproducible tools, and Codex collaboration.';
 const linuxCategories: ('Development' | 'Education' | 'Office' | 'Science')[] = ['Development', 'Education', 'Office', 'Science'];
 const linuxMakerOptions = {
-  name: 'research-ide',
-  productName: 'Research IDE',
+  name: DISTRIBUTION_IDENTITY.linux.packageName,
+  productName: DISTRIBUTION_IDENTITY.productName,
   genericName: 'Research Development Environment',
   description: 'Local-first research writing and development IDE',
   productDescription,
-  bin: 'research-ide-launcher',
+  bin: DISTRIBUTION_IDENTITY.linux.launcherName,
   categories: linuxCategories,
 };
 
@@ -149,9 +154,23 @@ async function assertPackagedRuntime(outputPath: string, platform?: string): Pro
   const installManifest = await findFile(outputPath, 'install-manifest.json');
   if (!installManifest) throw new Error(`Packaged application has no Research IDE install manifest under ${outputPath}`);
   const manifest = JSON.parse(await readFile(installManifest, 'utf8')) as Record<string, unknown>;
-  if (manifest.schemaVersion !== 1 || manifest.installId !== 'org.researchide.desktop' || manifest.kind !== 'application-installation') {
+  if (
+    manifest.schemaVersion !== 1
+    || manifest.installId !== DISTRIBUTION_IDENTITY.installId
+    || manifest.kind !== 'application-installation'
+    || manifest.version !== desktopVersion
+    || manifest.productName !== DISTRIBUTION_IDENTITY.productName
+    || manifest.executableName !== DISTRIBUTION_IDENTITY.executableName
+  ) {
     throw new Error(`Packaged Research IDE install manifest is invalid: ${installManifest}`);
   }
+  const upgradeIdentity = manifest.upgradeIdentity as Record<string, unknown> | undefined;
+  if (
+    upgradeIdentity?.windowsSquirrelPackage !== DISTRIBUTION_IDENTITY.windows.squirrelPackageName
+    || upgradeIdentity.windowsAppUserModelId !== DISTRIBUTION_IDENTITY.windows.appUserModelId
+    || upgradeIdentity.macOSBundleId !== DISTRIBUTION_IDENTITY.macos.bundleId
+    || upgradeIdentity.linuxPackage !== DISTRIBUTION_IDENTITY.linux.packageName
+  ) throw new Error(`Packaged Research IDE upgrade identity is invalid: ${installManifest}`);
   for (const script of ['uninstall-research-ide.sh', 'uninstall-research-ide.ps1', 'uninstall-research-ide-gui']) {
     if (!await findFile(outputPath, script)) throw new Error(`Packaged application has no ${script} under ${outputPath}`);
   }
@@ -174,8 +193,8 @@ async function assertPackagedRuntime(outputPath: string, platform?: string): Pro
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    executableName: 'research-ide',
-    appBundleId: 'org.researchide.desktop',
+    executableName: DISTRIBUTION_IDENTITY.executableName,
+    appBundleId: DISTRIBUTION_IDENTITY.macos.bundleId,
     appCategoryType: 'public.app-category.productivity',
     appCopyright: `Copyright © ${new Date().getFullYear()} Research IDE contributors`,
     extraResource: [distributionResources, uninstallResources],
@@ -194,8 +213,8 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({
-      name: 'research_ide',
-      setupExe: 'ResearchIDE-Setup.exe',
+      name: DISTRIBUTION_IDENTITY.windows.squirrelPackageName,
+      setupExe: DISTRIBUTION_IDENTITY.windows.setupExe,
       authors: 'Research IDE contributors',
       description: productDescription,
       noMsi: true,

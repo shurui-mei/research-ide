@@ -1,6 +1,6 @@
 {
   "name": "research-ide",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A local-first, cross-platform desktop IDE for research workflows.",
   "license": "MIT",
@@ -16,17 +16,18 @@
   },
   "scripts": {
     "dev": "pnpm --filter @research-ide/desktop dev",
-    "build": "pnpm --filter @research-ide/desktop build",
-    "package": "pnpm --filter @research-ide/desktop package",
-    "make": "pnpm --filter @research-ide/desktop make",
+    "build": "pnpm verify:release && pnpm --filter @research-ide/desktop build",
+    "package": "pnpm verify:release && pnpm --filter @research-ide/desktop package",
+    "make": "pnpm verify:release && pnpm --filter @research-ide/desktop make",
     "rebuild:native": "pnpm --filter @research-ide/desktop rebuild:native",
+    "verify:release": "node scripts/verify-release-version.mjs",
     "lint": "eslint .",
     "typecheck": "pnpm --filter @research-ide/desktop typecheck",
     "test": "pnpm --filter @research-ide/desktop test",
     "e2e": "pnpm --filter @research-ide/desktop e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "check": "pnpm verify:release && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const readline = require('node:readline');
 const logPath = process.argv[2];
 const cwd = process.cwd();
-fs.appendFileSync(logPath, JSON.stringify({ launchArgs: process.argv.slice(3) }) + '\n');
+fs.appendFileSync(logPath, JSON.stringify({ launchArgs: process.argv.slice(3), pathValue: process.env.PATH }) + '\n');
 const thread = {
   id: 'thread-1', name: 'Experiment review', preview: 'Review the experiment', cwd,
   createdAt: 1700000000, updatedAt: 1700000010, recencyAt: 1700000020,
@@ -103,7 +103,7 @@ def result_for(method, params):
   if method == 'thread/resume': return {'thread': thread, 'initialTurnsPage': turns_page((params or {}).get('initialTurnsPage')), 'model': 'model-a', 'reasoningEffort': 'medium'}
   if method == 'turn/start': return {'turn': {'id': 'turn-2'}}
   return {}
-append({'launchArgs': sys.argv[2:]})
+append({'launchArgs': sys.argv[2:], 'pathValue': os.environ.get('PATH')})
 for line in sys.stdin:
   message = json.loads(line)
   append({'rpc': message})
@@ -173,10 +173,11 @@ describe('Codex app-server response mapping', () => {
       })).toBe(await realpath(outsideExecutable));
 
       const childDirectories = __codexInternals.codexChildPathDirectories(
-        projectRoot, outsideExecutable, process.platform, [projectBin, outsideBin].join(path.delimiter),
+        projectRoot, outsideExecutable, process.platform, [projectBin, outsideBin].join(path.delimiter), [outsideBin, projectBin],
       );
       expect(childDirectories).toContain(await realpath(outsideBin));
       expect(childDirectories).not.toContain(await realpath(projectBin));
+      expect(childDirectories[0]).toBe(await realpath(outsideBin));
     } finally {
       await rm(base, { recursive: true, force: true });
     }
@@ -328,12 +329,14 @@ describe('Codex app-server response mapping', () => {
     const base = await mkdtemp(path.join(tmpdir(), 'research-ide-codex-contract-'));
     const projectRoot = path.join(base, 'project');
     const userData = path.join(base, 'user-data');
+    const toolBridge = path.join(base, 'codex-tool-bridge');
     const fakeServer = path.join(base, 'fake-app-server.cjs');
     const fakeServerPy = path.join(base, 'fake-app-server.py');
     const rpcLog = path.join(base, 'rpc.jsonl');
     await Promise.all([
       mkdir(projectRoot),
       mkdir(userData),
+      mkdir(toolBridge),
       writeFile(fakeServer, FAKE_APP_SERVER, 'utf8'),
       writeFile(fakeServerPy, FAKE_APP_SERVER_PY, 'utf8'),
     ]);
@@ -347,10 +350,15 @@ describe('Codex app-server response mapping', () => {
         writeFile(path.join(projectRoot, 'dirty.md'), 'disk version', 'utf8'),
         writeFile(path.join(projectRoot, 'saved.md'), 'saved version', 'utf8'),
       ]);
+      let bridgePrepares = 0;
       service = new CodexService(projects, userData, () => undefined, async () => undefined, {
         resolveCommand: () => process.platform === 'linux' && process.env.CODEX_SANDBOX_NETWORK_DISABLED === '1'
           ? { executable: '/usr/bin/python3', prefixArgs: [fakeServerPy, rpcLog], detached: false }
           : { executable: process.execPath, prefixArgs: [fakeServer, rpcLog], detached: false },
+        prepareToolchainBridge: async () => {
+          bridgePrepares += 1;
+          return { path: toolBridge, tools: [{ id: 'python', name: 'Python', version: '3.13.7', commands: ['python', 'research-ide-python'] }] };
+        },
       });
       const status = await service.start();
       expect(status).toMatchObject({
@@ -389,8 +397,9 @@ describe('Codex app-server response mapping', () => {
       });
       await expect(service.deleteThread('thread-1')).rejects.toThrow(/Stop the active Codex turn/i);
       await service.stop();
+      expect(bridgePrepares).toBeGreaterThanOrEqual(3);
 
-      const records = (await readFile(rpcLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { launchArgs?: string[]; rpc?: { method?: string; params?: Record<string, unknown> } });
+      const records = (await readFile(rpcLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { launchArgs?: string[]; pathValue?: string; rpc?: { method?: string; params?: Record<string, unknown> } });
       const methods = records.flatMap((record) => record.rpc?.method ? [record.rpc.method] : []);
       expect(methods).toEqual(expect.arrayContaining([
         'permissionProfile/list', 'model/list', 'config/read', 'configRequirements/read',
@@ -402,8 +411,11 @@ describe('Codex app-server response mapping', () => {
       expect(records.find((record) => record.rpc?.method === 'thread/unarchive')?.rpc?.params).toEqual({ threadId: 'thread-archive' });
       expect(records.find((record) => record.rpc?.method === 'thread/delete')?.rpc?.params).toEqual({ threadId: 'thread-delete' });
       expect(records[0].launchArgs?.join(' ')).toContain('auto_review.policy=');
+      expect(records[0].pathValue?.split(path.delimiter)[0]).toBe(await realpath(toolBridge));
       const resumed = records.find((record) => record.rpc?.method === 'thread/resume')?.rpc?.params;
       expect(resumed).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', permissions: ':read-only', cwd: projects.guard.root });
+      expect(String(resumed?.developerInstructions)).toContain('Python (3.13.7): python, research-ide-python');
+      expect(String(resumed?.developerInstructions)).toContain('Do not install, update, remove, or replace toolchains');
       expect(resumed?.initialTurnsPage).toEqual({ limit: 50, sortDirection: 'desc', itemsView: 'full' });
       const historyRequests = records.filter((record) => record.rpc?.method === 'thread/turns/list').map((record) => record.rpc?.params);
       expect(historyRequests).toEqual(expect.arrayContaining([

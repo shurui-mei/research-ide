@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { constants, createReadStream } from 'node:fs';
-import { access, lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ManagedToolchainCatalog, ManagedToolchainEvent, ToolEvent, ToolchainInfo, ToolRunRequest, ToolRunResult } from '../shared/types';
 import { AppError } from './errors';
@@ -14,8 +14,15 @@ interface ToolDefinition { id: string; name: string; kind: ToolKind; candidates:
 interface TrustedExecutable { path: string; sha256: string }
 interface TrustedExecutablesFile { schemaVersion: 2; tools: Partial<Record<ProjectToolchainId, TrustedExecutable[]>> }
 
+const LATEX_CANDIDATES = ['xelatex', 'lualatex', 'tectonic', 'latexmk', 'pdflatex'] as const;
+
+export interface CodexToolchainBridge {
+  path: string;
+  tools: Array<{ id: string; name: string; version?: string; commands: string[] }>;
+}
+
 const TOOLS: ToolDefinition[] = [
-  { id: 'latex', name: 'LaTeX', kind: 'latex', candidates: ['latexmk', 'xelatex', 'pdflatex', 'lualatex'], versionArgs: ['--version'] },
+  { id: 'latex', name: 'LaTeX / 中文排版', kind: 'latex', candidates: [...LATEX_CANDIDATES], versionArgs: ['--version'] },
   { id: 'python', name: 'Python', kind: 'python', candidates: process.platform === 'win32' ? ['python.exe', 'py.exe'] : ['python3', 'python'], versionArgs: ['--version'] },
   { id: 'r', name: 'R', kind: 'r', candidates: process.platform === 'win32' ? ['R.exe', 'Rscript.exe'] : ['R', 'Rscript'], versionArgs: ['--version'] },
   { id: 'pandoc', name: 'Pandoc', kind: 'pandoc', candidates: ['pandoc'], versionArgs: ['--version'] },
@@ -27,6 +34,61 @@ const INSTALL_URLS: Record<string, string> = {
   latex: 'https://www.latex-project.org/get/', python: 'https://www.python.org/downloads/', r: 'https://cran.r-project.org/',
   pandoc: 'https://pandoc.org/installing.html', compiler: 'https://clang.llvm.org/get_started.html', julia: 'https://julialang.org/downloads/',
 };
+
+const CODEX_BRIDGE_MARKER = 'bridge.json';
+const CODEX_BRIDGE_ALIASES: Record<string, string[]> = {
+  latex: ['research-ide-latex'],
+  python: ['python', 'python3', 'research-ide-python'],
+  r: ['research-ide-r'],
+  pandoc: ['pandoc', 'research-ide-pandoc'],
+  compiler: ['research-ide-compiler'],
+  julia: ['julia', 'research-ide-julia'],
+};
+
+function executableCommandName(executable: string): string {
+  return path.basename(executable).replace(/\.(?:exe|cmd|bat)$/iu, '');
+}
+
+function bridgeAliases(toolId: string, executable: string): string[] {
+  const executableName = executableCommandName(executable);
+  const values = [...(CODEX_BRIDGE_ALIASES[toolId] ?? []), executableName];
+  return [...new Set(values.filter((value) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u.test(value)))];
+}
+
+function bridgeEnvironment(environment: NodeJS.ProcessEnv): Array<[string, string]> {
+  const allowed = new Set(['PATH', 'CONDA_PREFIX', 'CONDA_DEFAULT_ENV', 'CONDA_SHLVL']);
+  return Object.entries(environment).flatMap(([key, value]) => allowed.has(key) && typeof value === 'string' ? [[key, value]] : []);
+}
+
+function shellQuote(value: string): string {
+  if (value.includes('\0')) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Toolchain wrapper value contains a null byte');
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function posixBridgeWrapper(executable: string, environment: NodeJS.ProcessEnv = {}): string {
+  const lines = ['#!/bin/sh'];
+  for (const [key, value] of bridgeEnvironment(environment)) {
+    lines.push(key === 'PATH'
+      ? `PATH=${shellQuote(value)}:"\${PATH:-}"`
+      : `${key}=${shellQuote(value)}`);
+    lines.push(`export ${key}`);
+  }
+  lines.push(`exec ${shellQuote(executable)} "$@"`);
+  return `${lines.join('\n')}\n`;
+}
+
+function windowsBridgeWrapper(executable: string, environment: NodeJS.ProcessEnv = {}): string {
+  if (/[\r\n\0"]/u.test(executable)) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Toolchain executable cannot be represented by a Windows command wrapper');
+  const escaped = executable.replaceAll('%', '%%');
+  const lines = ['@echo off'];
+  for (const [key, value] of bridgeEnvironment(environment)) {
+    if (/[\r\n\0"]/u.test(value)) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Toolchain environment cannot be represented by a Windows command wrapper');
+    const encoded = value.replaceAll('%', '%%');
+    lines.push(key === 'PATH' ? `set "PATH=${encoded};%PATH%"` : `set "${key}=${encoded}"`);
+  }
+  lines.push(`"${escaped}" %*`, 'exit /b %ERRORLEVEL%');
+  return `${lines.join('\r\n')}\r\n`;
+}
 
 async function safeEnvironment(
   extra: NodeJS.ProcessEnv = {},
@@ -170,7 +232,50 @@ async function resolveOnPath(command: string, forbiddenRoot: string): Promise<st
   return undefined;
 }
 
-export const toolchainInternals = { capture, childToolSearchDirectories, systemToolSearchDirectories };
+function latexEngineName(executable: string): string {
+  return path.basename(executable).toLowerCase().replace(/\.exe$/u, '');
+}
+
+function latexEngineDetail(executable: string): string {
+  const engine = latexEngineName(executable);
+  if (engine === 'xelatex') return 'XeLaTeX · Unicode / 中文';
+  if (engine === 'lualatex') return 'LuaLaTeX · Unicode / 中文';
+  if (engine === 'tectonic') return 'Tectonic · XeTeX / Unicode / 中文';
+  if (engine === 'latexmk') return 'latexmk · 使用 XeLaTeX 编译';
+  if (engine === 'pdflatex') return 'pdfLaTeX · 中文兼容回退';
+  return path.basename(executable);
+}
+
+function latexArguments(executable: string, outputDirectory: string, sourceName: string): string[] {
+  const engine = latexEngineName(executable);
+  const common = ['-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-no-shell-escape'];
+  if (engine === 'latexmk') {
+    return [
+      '-norc',
+      '-xelatex',
+      '-latexoption=-no-shell-escape',
+      '-latexoption=-interaction=nonstopmode',
+      '-latexoption=-halt-on-error',
+      '-latexoption=-file-line-error',
+      `-outdir=${outputDirectory}`,
+      sourceName,
+    ];
+  }
+  if (engine === 'tectonic') return ['--untrusted', '--keep-logs', '--outdir', outputDirectory, sourceName];
+  return [...common, `-output-directory=${outputDirectory}`, sourceName];
+}
+
+export const toolchainInternals = {
+  bridgeAliases,
+  capture,
+  childToolSearchDirectories,
+  latexCandidates: [...LATEX_CANDIDATES],
+  latexArguments,
+  latexEngineDetail,
+  posixBridgeWrapper,
+  systemToolSearchDirectories,
+  windowsBridgeWrapper,
+};
 
 export interface PreparedManagedToolchainSelection {
   readonly toolId: ProjectToolchainId;
@@ -204,6 +309,8 @@ export class ToolchainService {
   private readonly latexOutputs = new Map<string, { root: string; path: string }>();
   private readonly managedRoot: string;
   private readonly trustedExecutablesPath: string;
+  private readonly codexBridgeRoot: string;
+  private readonly userDataPath: string;
   private managedService?: ManagedToolchainService;
   private sessionIdentity?: string;
   private sessionToken?: string;
@@ -219,8 +326,10 @@ export class ToolchainService {
     private readonly emitManaged: (event: ManagedToolchainEvent) => void = () => undefined,
     private readonly managedOptions: ManagedToolchainOptions = {},
   ) {
+    this.userDataPath = userDataPath;
     this.managedRoot = path.join(userDataPath, 'toolchains');
     this.trustedExecutablesPath = path.join(userDataPath, 'trusted-toolchains.json');
+    this.codexBridgeRoot = path.join(userDataPath, 'codex-tool-bridge');
   }
 
   beginProjectSession(): void {
@@ -261,6 +370,45 @@ export class ToolchainService {
       );
     }
     return results;
+  }
+
+  /**
+   * Expose only the current project's verified tool selections to Codex. The
+   * bridge contains aliases, not installers or package-manager entry points,
+   * and lives outside the project so project content cannot replace it.
+   */
+  async prepareCodexBridge(): Promise<CodexToolchainBridge> {
+    await this.projects.assertMetadataIntegrity();
+    await this.ensureDetected();
+    const bridgeRoot = await this.ensureCodexBridgeRoot();
+    const selected = (await this.list()).filter((tool) => tool.selected && tool.status === 'ready' && tool.path);
+    const desired = new Map<string, { executable: string; environment: NodeJS.ProcessEnv }>();
+    const tools: CodexToolchainBridge['tools'] = [];
+    for (const tool of selected) {
+      const executable = await this.projects.guard.assertExecutable(tool.path!);
+      if (executable !== tool.path) throw new AppError('TOOL_CHANGED', 'A selected toolchain changed before it could be exposed to Codex');
+      await this.assertTrustedBindingUnchanged(tool.id, executable);
+      const binding = this.projects.configuredToolchains[tool.id as ProjectToolchainId];
+      const environment = tool.managed && binding?.source === 'managed'
+        ? await this.managed().activationEnvironment(binding.path)
+        : {};
+      const commands = bridgeAliases(tool.id, executable);
+      for (const command of commands) {
+        const filename = process.platform === 'win32' ? `${command}.cmd` : command;
+        const existing = desired.get(filename);
+        if (existing && existing.executable !== executable) throw new AppError('CODEX_TOOL_ALIAS_CONFLICT', `More than one selected toolchain provides ${command}`);
+        desired.set(filename, { executable, environment });
+      }
+      tools.push({ id: tool.id, name: tool.name, version: tool.version, commands });
+    }
+
+    for (const entry of await readdir(bridgeRoot, { withFileTypes: true })) {
+      if (entry.name === CODEX_BRIDGE_MARKER || desired.has(entry.name)) continue;
+      if (entry.isDirectory()) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', `Codex tool bridge contains an unexpected directory: ${entry.name}`);
+      await rm(path.join(bridgeRoot, entry.name), { force: true });
+    }
+    for (const [filename, target] of desired) await this.writeCodexBridgeAlias(bridgeRoot, filename, target.executable, target.environment);
+    return { path: bridgeRoot, tools };
   }
 
   ensureDetected(): Promise<ToolchainInfo[]> {
@@ -500,17 +648,12 @@ export class ToolchainService {
     const executable = await this.projects.guard.assertExecutable(tool.path!);
     if (executable !== tool.path) throw new AppError('TOOL_CHANGED', 'The selected LaTeX executable now resolves to a different path; select it again before compiling');
     await this.assertTrustedBindingUnchanged('latex', executable);
-    const engine = path.basename(executable).toLowerCase().replace(/\.exe$/u, '');
+    const engine = latexEngineName(executable);
     const outputId = randomUUID();
     const buildRoot = await this.projects.internalDirectory('build');
     const outputDirectory = path.join(buildRoot, outputId);
     await mkdir(outputDirectory, { recursive: true });
-    const common = ['-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-no-shell-escape'];
-    const args = engine === 'latexmk'
-      ? ['-norc', '-pdf', '-pdflatex=pdflatex -no-shell-escape %O %S', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', `-outdir=${outputDirectory}`, path.basename(source)]
-      : engine === 'tectonic'
-        ? ['--untrusted', '--keep-logs', '--outdir', outputDirectory, path.basename(source)]
-        : [...common, `-output-directory=${outputDirectory}`, path.basename(source)];
+    const args = latexArguments(executable, outputDirectory, path.basename(source));
     const result = await this.run(
       { toolId: 'latex', args, cwd: this.projects.guard.relative(path.dirname(source)) },
       {
@@ -719,7 +862,17 @@ export class ToolchainService {
       if (!executable) continue;
       try {
         const version = await this.readVersion(executable, definition.versionArgs, projectRoot);
-        return { id: definition.id, name: definition.name, kind: definition.kind, status: 'ready', path: executable, version, selected: false, managed: false, detail: path.basename(executable) };
+        return {
+          id: definition.id,
+          name: definition.name,
+          kind: definition.kind,
+          status: 'ready',
+          path: executable,
+          version,
+          selected: false,
+          managed: false,
+          detail: definition.id === 'latex' ? latexEngineDetail(executable) : path.basename(executable),
+        };
       } catch { /* continue with next candidate */ }
     }
     return { id: definition.id, name: definition.name, kind: definition.kind, status: 'missing', selected: false, managed: false, detail: 'Not found on the system PATH' };
@@ -743,6 +896,49 @@ export class ToolchainService {
       this.selectedBindings.delete(toolId);
       this.trustedBindingHashes.delete(toolId);
       throw new AppError('TOOL_CHANGED', 'The confirmed executable changed on disk; choose it again before running');
+    }
+  }
+
+  private async ensureCodexBridgeRoot(): Promise<string> {
+    await mkdir(this.userDataPath, { recursive: true, mode: 0o700 });
+    await mkdir(this.codexBridgeRoot, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error;
+    });
+    const info = await lstat(this.codexBridgeRoot);
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Codex tool bridge root must be an application-owned directory');
+    const [canonicalUserData, canonicalBridge] = await Promise.all([realpath(this.userDataPath), realpath(this.codexBridgeRoot)]);
+    if (path.dirname(canonicalBridge) !== canonicalUserData) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Codex tool bridge resolves outside Research IDE application data');
+    const markerPath = path.join(canonicalBridge, CODEX_BRIDGE_MARKER);
+    try {
+      const markerInfo = await lstat(markerPath);
+      if (markerInfo.isSymbolicLink() || !markerInfo.isFile()) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Codex tool bridge marker must be a regular file');
+      const marker = JSON.parse(await readFile(markerPath, 'utf8')) as { schemaVersion?: unknown; kind?: unknown };
+      if (marker.schemaVersion !== 1 || marker.kind !== 'research-ide-codex-tool-bridge') throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Codex tool bridge marker is invalid');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await writeFile(markerPath, JSON.stringify({ schemaVersion: 1, kind: 'research-ide-codex-tool-bridge' }, null, 2), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    }
+    return canonicalBridge;
+  }
+
+  private async writeCodexBridgeAlias(bridgeRoot: string, filename: string, executable: string, environment: NodeJS.ProcessEnv): Promise<void> {
+    if (path.basename(filename) !== filename || filename === CODEX_BRIDGE_MARKER) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', 'Codex tool alias name is invalid');
+    const destination = path.join(bridgeRoot, filename);
+    const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (existing?.isDirectory()) throw new AppError('UNSAFE_CODEX_TOOL_BRIDGE', `Codex tool alias is unexpectedly a directory: ${filename}`);
+    const temporary = path.join(bridgeRoot, `.${filename}.${randomUUID()}.tmp`);
+    try {
+      const wrapper = process.platform === 'win32'
+        ? windowsBridgeWrapper(executable, environment)
+        : posixBridgeWrapper(executable, environment);
+      await writeFile(temporary, wrapper, { encoding: 'utf8', flag: 'wx', mode: 0o700 });
+      if (process.platform === 'win32') await rm(destination, { force: true });
+      await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { force: true });
     }
   }
 

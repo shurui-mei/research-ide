@@ -1,9 +1,10 @@
-import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { app, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { IPC } from '../shared/ipc';
-import type { CodexApprovalDecision, CodexSendInput, CodexThreadListInput, DocxSaveRequest, LiteratureItem, ManagedToolchainEvent, ProjectKind, ToolEvent, ToolRunRequest, WorkspaceChange } from '../shared/types';
+import type { CodexApprovalDecision, CodexRuntimeEvent, CodexSendInput, CodexThreadListInput, DocxSaveRequest, LiteratureItem, ManagedToolchainEvent, ProjectKind, ToolEvent, ToolRunRequest, WorkspaceChange } from '../shared/types';
 import { CodexService } from './codex-service';
+import { CodexRuntimeService } from './codex-runtime-service';
 import { DocxService } from './docx-service';
 import { AppError, publicError } from './errors';
 import { LiteratureService } from './literature-service';
@@ -47,6 +48,7 @@ export interface MainServices {
   literature: LiteratureService;
   toolchains: ToolchainService;
   codex: CodexService;
+  codexRuntime: CodexRuntimeService;
   docx: DocxService;
   legacyDoc: LegacyDocService;
   dispose(): Promise<void>;
@@ -90,9 +92,25 @@ export function registerIpc(window: BrowserWindow, userDataPath: string): MainSe
     libreOfficeConverter,
   );
   const literature = new LiteratureService(projects, async () => { await shell.openExternal('zotero://select/library'); });
-  const codex = new CodexService(projects, userDataPath, (event) => send(IPC.codex.event, event), async (url) => {
-    await shell.openExternal(assertSafeWebUrl(url, true).toString(), { activate: true });
-  });
+  const codexRuntime = new CodexRuntimeService(
+    userDataPath,
+    (event: CodexRuntimeEvent) => send(IPC.codexRuntime.event, event),
+    { currentProjectRoot: () => projects.current?.path },
+  );
+  const codex = new CodexService(
+    projects,
+    userDataPath,
+    (event) => send(IPC.codex.event, event),
+    async (url) => { await shell.openExternal(assertSafeWebUrl(url, true).toString(), { activate: true }); },
+    {
+      resolveCommand: async (projectRoot) => {
+        const runtime = await codexRuntime.resolveCommand(projectRoot);
+        return { executable: runtime.path, prefixArgs: runtime.prefixArgs, environment: runtime.environment };
+      },
+      prepareToolchainBridge: () => toolchains.prepareCodexBridge(),
+      clientVersion: app.getVersion(),
+    },
+  );
   const enqueueMutation = <T>(callback: () => T | Promise<T>): Promise<T> => {
     const operation = operationQueue.then(callback, callback);
     operationQueue = operation.then(() => undefined, () => undefined);
@@ -299,10 +317,72 @@ export function registerIpc(window: BrowserWindow, userDataPath: string): MainSe
   handle(IPC.codex.deleteThread, (_event, threadId: string) => codex.deleteThread(threadId));
   handleConcurrent(IPC.codex.listModels, () => codex.listModels());
   handle(IPC.codex.updateSettings, (_event, input: { threadId?: string; model?: string; effort?: string }) => codex.updateSettings(input));
+  handleConcurrent(IPC.codexRuntime.status, () => codexRuntime.status());
+  handleConcurrent(IPC.codexRuntime.catalog, async () => {
+    const catalog = await codexRuntime.catalog(true);
+    return { ...catalog, releases: catalog.releases.slice(0, 1) };
+  });
+  handle(IPC.codexRuntime.selectExecutable, async () => {
+    const current = await codexRuntime.status();
+    if (current.state === 'ready') throw new AppError('CODEX_RUNTIME_ALREADY_CONFIGURED', 'Codex CLI is already available; use Check for updates instead of switching runtimes');
+    const result = await dialog.showOpenDialog(window, {
+      title: '选择 Codex CLI 可执行文件',
+      buttonLabel: '检查可执行文件',
+      properties: ['openFile'],
+      filters: process.platform === 'win32' ? [{ name: 'Codex CLI executable', extensions: ['exe'] }] : [{ name: 'Codex CLI executable', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return codexRuntime.status();
+    const prepared = await codexRuntime.prepareSelection(result.filePaths[0]);
+    const confirmation = await dialog.showMessageBox(window, {
+      type: 'warning', title: '信任此 Codex CLI？', message: `允许 Research IDE 使用 Codex ${prepared.version}？`,
+      detail: `规范路径：${prepared.path}\nSHA-256：${prepared.sha256}\n\n应用会在每次解析时重新验证此文件；文件改变后会停止使用。CODEX_HOME 不会被移动或覆盖。`,
+      buttons: ['取消', '信任并使用'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) return codexRuntime.status();
+    const status = await codexRuntime.confirmSelection(prepared);
+    await codex.stop();
+    return status;
+  });
+  handleConcurrent(IPC.codexRuntime.install, async (_event, version: string) => {
+    if (typeof version !== 'string') throw new AppError('CODEX_RUNTIME_INVALID_VERSION', 'Codex runtime version is invalid');
+    const catalog = await codexRuntime.catalog(true);
+    const release = catalog.releases[0];
+    if (!release || release.version !== version) throw new AppError('CODEX_RUNTIME_LATEST_ONLY', 'Codex CLI can only install the latest verified stable release');
+    const confirmation = await dialog.showMessageBox(window, {
+      type: 'info', title: '安装 Codex CLI', message: `安装官方 Codex ${release.version}？`,
+      detail: `来源：GitHub openai/codex\n文件：${release.assetName}\n大小：${Math.ceil(release.size / 1024 / 1024)} MB\nSHA-256：${release.sha256}\n\n安装位于 Research IDE 应用数据目录，不会覆盖系统 Codex 或 CODEX_HOME。`,
+      buttons: ['取消', '下载、验证并安装'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) throw new AppError('CODEX_RUNTIME_INSTALL_CANCELLED', 'Codex runtime installation was cancelled');
+    const status = await codexRuntime.install(version);
+    await codex.stop();
+    return status;
+  });
+  handleConcurrent(IPC.codexRuntime.update, async () => {
+    const status = await codexRuntime.status();
+    if (status.active?.source !== 'managed') throw new AppError('CODEX_RUNTIME_NOT_MANAGED', 'Install a managed Codex runtime before using managed update');
+    const catalog = await codexRuntime.catalog(true);
+    const latest = catalog.releases[0];
+    if (!latest || !status.active || latest.version === status.active.version) return status;
+    const confirmation = await dialog.showMessageBox(window, {
+      type: 'info', title: '更新 Codex CLI', message: `将托管 Codex 更新到 ${latest.version}？`,
+      detail: '新版本会安装到独立版本目录并完整验证，成功后才原子切换；系统 Codex 和 CODEX_HOME 不会改变。',
+      buttons: ['取消', '更新'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) return status;
+    const updated = await codexRuntime.update();
+    await codex.stop();
+    return updated;
+  });
+  handle(IPC.codexRuntime.clearSelection, async () => {
+    const status = await codexRuntime.clearSelection();
+    await codex.stop();
+    return status;
+  });
   handle(IPC.diagnostics.list, () => []);
 
   return {
-    projects, snapshots, literature, toolchains, codex, docx, legacyDoc,
-    async dispose() { legacyDoc.dispose(); await operationQueue.catch(() => undefined); toolchains.endProjectSession(); await codex.stop(); await toolchains.stopAll(); await projects.close(); },
+    projects, snapshots, literature, toolchains, codex, codexRuntime, docx, legacyDoc,
+    async dispose() { await codexRuntime.dispose(); legacyDoc.dispose(); await operationQueue.catch(() => undefined); toolchains.endProjectSession(); await codex.stop(); await toolchains.stopAll(); await projects.close(); },
   };
 }

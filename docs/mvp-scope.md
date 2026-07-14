@@ -10,7 +10,7 @@ MVP 的目标不是一次性替代 TeXstudio、Word、Zotero、Conda 和 VS Code
 | 文本/LaTeX | Monaco 编辑、保存、系统 LaTeX 探测、受控编译、日志与 PDF 预览 |
 | DOC/DOCX/富文本 | 直接打开和保存 `.docx`；通过受约束的本地 LibreOffice 兼容引擎打开/写回 `.doc`；支持常用科研排版、表格、链接与图片，并在可能丢失高级结构时提示或只读 |
 | PDF | PDF.js 只读预览、页码/缩放等基础操作 |
-| 工具链 | 项目打开时自动探测系统工具；通过本地版本中心安装/并存/切换 LaTeX、Python、R、Pandoc、C/C++ 与 Julia；按 `.research_ide/project.toml` 绑定并结构化运行/停止 |
+| 工具箱 | 项目打开时自动探测系统工具；通过本地版本中心安装/并存/切换 LaTeX、Python、R、Pandoc、C/C++ 与 Julia，并以 latest-only 流程管理 Codex CLI；按 `.research_ide/project.toml` 绑定并结构化运行/停止 |
 | Codex | app-server 生命周期、系统凭据库登录或会话型 OpenAI-compatible 配置、持久对话切换与有界分页恢复、动态模型/思考强度、问答/智能体、原生自动审查与人工回退、取消 |
 | 文献 | 本地元数据/附件入口以及 Zotero adapter 的检测与连接边界 |
 | 版本/备份 | 对用户选择的文件建立本地快照和可配置保留策略；不修改用户 Git 历史 |
@@ -38,7 +38,7 @@ MVP 直接编辑原 `.docx`，无需先转换成应用专用文稿。Tiptap/Pros
 
 ## 下载说明
 
-本地版本中心从 conda-forge 获取版本，由应用下载并校验带 GitHub SHA-256 摘要的 Pixi 管理器，再让 Pixi 在 Research IDE 用户数据目录的隔离 workspace 中解析和安装。安装不修改系统 PATH；`install.json` 最后写入，失败目录会清理，项目只保存经校验的相对可执行路径和版本选择。第三方包仍适用各自许可证，完整设计与平台边界见 [本地工具链版本中心](managed-toolchains.md)。
+本地版本中心从 conda-forge 获取版本，由应用下载并校验带 GitHub SHA-256 摘要的 Pixi 管理器，再让 Pixi 在 Research IDE 用户数据目录的隔离 workspace 中解析和安装。安装不修改系统 PATH；`install.json` 最后写入，失败目录会清理，项目只保存经校验的相对可执行路径和版本选择。第三方包仍适用各自许可证，完整设计与平台边界见 [本地工具版本中心](managed-toolchains.md)。
 
 ## 验收底线
 

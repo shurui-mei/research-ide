@@ -3,6 +3,9 @@ import type {
   CodexAccountStatus,
   CodexApprovalDecision,
   CodexEvent,
+  CodexRuntimeCatalog,
+  CodexRuntimeEvent,
+  CodexRuntimeStatus,
   CodexModelOption,
   CodexSendInput,
   CodexStatus,
@@ -131,6 +134,15 @@ declare global {
         listModels(): Promise<CodexModelOption[]>;
         updateSettings(input: { threadId?: string; model?: string; effort?: string }): Promise<CodexStatus>;
         onEvent(listener: (event: CodexEvent) => void): () => void;
+      };
+      codexRuntime: {
+        status(): Promise<CodexRuntimeStatus>;
+        catalog(): Promise<CodexRuntimeCatalog>;
+        selectExecutable(): Promise<CodexRuntimeStatus>;
+        install(version: string): Promise<CodexRuntimeStatus>;
+        update(): Promise<CodexRuntimeStatus>;
+        clearSelection(): Promise<CodexRuntimeStatus>;
+        onEvent(listener: (event: CodexRuntimeEvent) => void): () => void;
       };
       diagnostics: {
         listProblems(): Promise<ProblemItem[]>;

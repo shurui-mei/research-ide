@@ -27,5 +27,9 @@ export const IPC = {
   codex: {
     status: 'codex:status', start: 'codex:start', signIn: 'codex:sign-in', signOut: 'codex:sign-out', send: 'codex:send', decideApproval: 'codex:decide-approval', cancelTurn: 'codex:cancel-turn', newThread: 'codex:new-thread', listThreads: 'codex:list-threads', readThread: 'codex:read-thread', resumeThread: 'codex:resume-thread', archiveThread: 'codex:archive-thread', unarchiveThread: 'codex:unarchive-thread', deleteThread: 'codex:delete-thread', listModels: 'codex:list-models', updateSettings: 'codex:update-settings', event: 'codex:event',
   },
+  codexRuntime: {
+    status: 'codex-runtime:status', catalog: 'codex-runtime:catalog', selectExecutable: 'codex-runtime:select-executable',
+    install: 'codex-runtime:install', update: 'codex-runtime:update', clearSelection: 'codex-runtime:clear-selection', event: 'codex-runtime:event',
+  },
   diagnostics: { list: 'diagnostics:list' },
 } as const;

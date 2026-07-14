@@ -1,7 +1,7 @@
 {
   "name": "@research-ide/desktop",
   "productName": "Research IDE",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local-first research writing and development environment.",
   "author": "Research IDE contributors",
   "license": "MIT",

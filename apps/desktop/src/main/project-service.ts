@@ -589,8 +589,32 @@ export class ProjectService {
   }
 
   private async writeLatexTemplate(root: string, template: ProjectKind): Promise<void> {
-    const title = template === 'paper' ? 'Research Paper' : 'LaTeX Project';
-    await writeFile(path.join(root, 'main.tex'), `\\documentclass{article}\n\\usepackage[utf8]{inputenc}\n\\title{${title}}\n\\author{}\n\\begin{document}\n\\maketitle\n\n\\end{document}\n`, 'utf8');
+    const title = template === 'paper' ? '研究论文' : '中文 LaTeX 项目';
+    await writeFile(path.join(root, 'main.tex'), `\\documentclass[UTF8,fontset=fandol]{ctexart}
+\\usepackage[a4paper,margin=2.5cm]{geometry}
+\\usepackage{graphicx}
+\\usepackage{booktabs}
+\\usepackage[hidelinks]{hyperref}
+
+\\title{${title}}
+\\author{}
+\\date{\\today}
+
+\\begin{document}
+\\maketitle
+
+\\begin{abstract}
+请在此撰写摘要。
+\\end{abstract}
+
+\\section{引言}
+这是一个支持中文排版的 Research IDE 项目。
+
+% 添加文献后可启用：
+% \\bibliographystyle{plain}
+% \\bibliography{references}
+\\end{document}
+`, 'utf8');
     await writeFile(path.join(root, 'references.bib'), '', 'utf8');
   }
 

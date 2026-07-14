@@ -59,7 +59,7 @@ export interface ManagedToolchainOptions {
 
 const DEFINITIONS: Record<ProjectToolchainId, ManagedDefinition> = {
   latex: {
-    packageName: 'tectonic', displayName: 'Tectonic (LaTeX)',
+    packageName: 'tectonic', displayName: 'Tectonic（Unicode / 中文 LaTeX）',
     relativeExecutables: ['bin/tectonic', 'Library/bin/tectonic.exe'], executablePattern: /^tectonic(?:\.exe)?$/iu,
   },
   python: {

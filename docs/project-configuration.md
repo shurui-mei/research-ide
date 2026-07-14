@@ -44,11 +44,13 @@ Windows 自定义路径推荐使用 TOML literal string，例如 `path = 'C:\\R\
 - `schema_version` 用于显式迁移；应用只写自己支持的版本，并在迁移前备份原文件；
 - `project.id` 创建后稳定不变，移动目录不应改变项目身份；
 - 相对 glob 都以项目根目录为基准；
-- 打开项目后会在后台执行一次工具检测；本次项目会话首次打开工具链视图会等待同一个检测任务，不会重复扫描。工具链面板中的“重新检测”才会显式刷新缓存；
+- 打开项目后会在后台执行一次工具检测；本次项目会话首次打开工具箱会等待同一个检测任务，不会重复扫描。工具箱中的“重新检测”才会显式刷新缓存；
 - `source = "system"` 只会从应用进程继承的 `PATH` 与少量固定系统目录候选中解析，并拒绝解析到项目目录内的程序；macOS 额外覆盖 Finder 启动时常缺失的 Homebrew、TeX 与 R Framework 位置；
-- `source = "managed"` 的 `path` 由工具链面板写入，必须匹配 Research IDE 用户数据目录下 `toolchains/` 中已完成的 `install.json`、平台、软件包、版本与可执行文件 SHA-256；手写路径、越界路径、被替换的程序与指向目录外的符号链接都会被拒绝；
+- LaTeX 的系统候选顺序是 XeLaTeX、LuaLaTeX、Tectonic、latexmk、pdfLaTeX；latexmk 以 XeLaTeX 模式运行，pdfLaTeX 只作兼容回退。`source = "managed"` 的 LaTeX provider 当前固定为 Tectonic；项目配置绑定的是经过校验的工具来源/可执行文件，不允许项目内容在编译时改写引擎命令；
+- 新建 `paper` 和 `latex` 项目的 `main.tex` 使用 `ctexart[UTF8,fontset=fandol]`，可由 Tectonic、XeLaTeX 或 LuaLaTeX 处理。系统 TeX 仍需自行具备 `ctex`、Fandol 等依赖；受管 Tectonic 第一次遇到尚未缓存的资源时需要联网下载官方 bundle，不能把工具安装完成误解为所有模板均已离线预热；
+- `source = "managed"` 的 `path` 由工具箱写入，必须匹配 Research IDE 用户数据目录下 `toolchains/` 中已完成的 `install.json`、平台、软件包、版本与可执行文件 SHA-256；手写路径、越界路径、被替换的程序与指向目录外的符号链接都会被拒绝；
 - `source = "custom"` 必须是绝对路径，并且只有规范路径与文件 SHA-256 都匹配用户通过系统文件选择器确认的记录时才会自动绑定；文件内容变化后必须重新选择。旧版字符串路径按 `custom` 处理，仍须重新确认；
-- 用户可把当前 PATH 结果显式设为项目默认，也可通过工具链面板确认自定义程序；自定义选择会先把规范路径与 SHA-256 写入用户数据目录中的确认登记，再以临时文件和原子替换方式写回结构化 `project.toml`，写入前后都执行 schema 校验；
+- 用户可把当前 PATH 结果显式设为项目默认，也可通过工具箱确认自定义程序；自定义选择会先把规范路径与 SHA-256 写入用户数据目录中的确认登记，再以临时文件和原子替换方式写回结构化 `project.toml`，写入前后都执行 schema 校验；
 - `.research_ide/state.sqlite` 中的工具链表只是可重建缓存，不能单独授予程序执行权限；无效、越界或未经确认的配置一律阻止绑定，但系统 PATH 检测结果仍可供用户查看；
 - `backup.include` 是用户明确选择的备份范围，不能默认把整个 home、`.git`、环境目录或机密纳入；
 - `backup.include/exclude/max_snapshots` 在 0.1 是供后续保留策略使用的保留字段；当前快照以 UI 中的明确文件选择为准，不会根据未实现的自动策略静默删除历史；

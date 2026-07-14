@@ -15,7 +15,7 @@ interface TestProject {
 
 const opened: TestProject[] = [];
 
-async function createProject(template: 'blank' | 'paper' = 'blank'): Promise<TestProject> {
+async function createProject(template: 'blank' | 'latex' | 'paper' = 'blank'): Promise<TestProject> {
   const base = await mkdtemp(path.join(tmpdir(), 'research-ide-storage-'));
   const parent = path.join(base, 'projects');
   await mkdir(parent);
@@ -34,6 +34,21 @@ afterEach(async () => {
 });
 
 describe('project configuration and document storage', () => {
+  it.each([
+    ['paper', '研究论文'],
+    ['latex', '中文 LaTeX 项目'],
+  ] as const)('creates a ctex/Fandol Chinese LaTeX template for %s projects', async (template, title) => {
+    const { root } = await createProject(template);
+
+    const source = await readFile(path.join(root, 'main.tex'), 'utf8');
+    expect(source).toContain('\\documentclass[UTF8,fontset=fandol]{ctexart}');
+    expect(source).toContain(`\\title{${title}}`);
+    expect(source).toContain('\\section{引言}');
+    expect(source).toContain('支持中文排版');
+    expect(source).not.toContain('inputenc');
+    await expect(readFile(path.join(root, 'references.bib'), 'utf8')).resolves.toBe('');
+  });
+
   it('creates a reviewable Codex policy copy that explicitly cannot grant authority', async () => {
     const { root } = await createProject();
 

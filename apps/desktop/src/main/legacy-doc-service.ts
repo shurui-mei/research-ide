@@ -159,7 +159,7 @@ export class LibreOfficeConverter implements LegacyDocConverter {
     if (!executable) {
       throw new AppError(
         'LIBREOFFICE_NOT_FOUND',
-        '无法打开 DOC：本机未找到 LibreOffice。请先安装 LibreOffice，或在“设置 → 工具链 → 旧版 Word 转换器”中选择可信的 soffice/libreoffice 可执行文件，然后重新打开文档。',
+        '无法打开 DOC：本机未找到 LibreOffice。请先安装 LibreOffice，或在“设置 → 工具箱 → 旧版 Word 转换器”中选择可信的 soffice/libreoffice 可执行文件，然后重新打开文档。',
       );
     }
     const job = await this.createJobDirectory();

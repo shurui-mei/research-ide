@@ -23,6 +23,7 @@ import { CODEX_CONTEXT_LIMITS, CODEX_THREAD_HISTORY_LIMITS } from '../shared/typ
 import { AppError } from './errors';
 import { detachedProcessGroup, processTreeAlive, signalProcessTree } from './process-tree';
 import type { ProjectService } from './project-service';
+import type { CodexToolchainBridge } from './toolchain-service';
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = string | number;
@@ -65,8 +66,12 @@ export interface CodexCommand {
 }
 
 export interface CodexServiceOptions {
-  /** Test/embedding seam; production still resolves only a trusted system Codex. */
-  resolveCommand?: (projectRoot: string) => CodexCommand;
+  /** Test/embedding seam; production resolves a verified system/imported/managed Codex. */
+  resolveCommand?: (projectRoot: string) => CodexCommand | Promise<CodexCommand>;
+  /** Application-owned bridge containing only the active project's verified tools. */
+  prepareToolchainBridge?: () => Promise<CodexToolchainBridge>;
+  /** Version reported to app-server for this embedding client. */
+  clientVersion?: string;
 }
 
 function codexSystemSearchDirectories(
@@ -120,12 +125,13 @@ function codexChildPathDirectories(
   executable: string,
   platform: NodeJS.Platform = process.platform,
   pathValue = process.env.PATH,
+  additionalDirectories: string[] = [],
 ): string[] {
   const canonicalRoot = (() => { try { return canonicalPathSync(projectRoot); } catch { return undefined; } })();
   if (!canonicalRoot) return [];
   const seen = new Set<string>();
   const directories: string[] = [];
-  for (const directory of [path.dirname(executable), ...codexSystemSearchDirectories(platform, pathValue)]) {
+  for (const directory of [...additionalDirectories, path.dirname(executable), ...codexSystemSearchDirectories(platform, pathValue)]) {
     try {
       const canonical = canonicalPathSync(directory);
       if (!isOutsideProject(canonicalRoot, canonical)) continue;
@@ -175,6 +181,7 @@ class CodexRpcClient extends EventEmitter {
     private readonly prefixArgs: string[],
     private readonly extraEnvironment: NodeJS.ProcessEnv,
     private readonly appServerArguments: string[],
+    private readonly clientVersion: string,
     private readonly redact: (value: string) => string,
     private readonly detached = detachedProcessGroup(),
   ) { super(); }
@@ -202,7 +209,7 @@ class CodexRpcClient extends EventEmitter {
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on('line', (line) => this.receive(line));
     const initializeResult = await this.request('initialize', {
-      clientInfo: { name: 'research-ide', title: 'Research IDE', version: '0.1.0' },
+      clientInfo: { name: 'research-ide', title: 'Research IDE', version: this.clientVersion },
       capabilities: { experimentalApi: true, requestAttestation: false },
     }, 30_000);
     this.notify('initialized');
@@ -609,6 +616,7 @@ export class CodexService {
   private models: CodexModelOption[] = [];
   private preferredModel?: string;
   private preferredEffort?: string;
+  private toolchainBridge?: CodexToolchainBridge;
 
   constructor(
     private readonly projects: ProjectService,
@@ -645,9 +653,25 @@ export class CodexService {
       appServerArguments.push(...providerRuntime.appServerArguments);
     }
     const projectRoot = this.projects.guard.root;
-    const command = this.options.resolveCommand?.(projectRoot) ?? resolveCodexCommand(projectRoot);
-    environment.PATH = codexChildPathDirectories(projectRoot, command.executable).join(path.delimiter);
-    const rpc = new CodexRpcClient(projectRoot, command.executable, command.prefixArgs, { ...command.environment, ...environment }, appServerArguments, (value) => this.redact(value), command.detached);
+    const command = await this.options.resolveCommand?.(projectRoot) ?? resolveCodexCommand(projectRoot);
+    this.toolchainBridge = await this.options.prepareToolchainBridge?.();
+    environment.PATH = codexChildPathDirectories(
+      projectRoot,
+      command.executable,
+      process.platform,
+      process.env.PATH,
+      this.toolchainBridge ? [this.toolchainBridge.path] : [],
+    ).join(path.delimiter);
+    const rpc = new CodexRpcClient(
+      projectRoot,
+      command.executable,
+      command.prefixArgs,
+      { ...command.environment, ...environment },
+      appServerArguments,
+      this.options.clientVersion ?? '0.0.0',
+      (value) => this.redact(value),
+      command.detached,
+    );
     this.rpc = rpc;
     rpc.on('request', (request: ServerRequest) => this.onServerRequest(request));
     rpc.on('notification', (notification: { method: string; params: JsonRecord }) => this.onNotification(notification.method, notification.params));
@@ -705,6 +729,7 @@ export class CodexService {
     this.threadIds.clear();
     this.permissionProfiles = {};
     this.models = [];
+    this.toolchainBridge = undefined;
     this.setStatus({
       server: 'stopped',
       account: this.statusValue.account,
@@ -788,6 +813,7 @@ export class CodexService {
 
   async newThread(input: { model?: string; effort?: string } = {}): Promise<string> {
     await this.start();
+    await this.refreshToolchainBridge();
     const selection = this.validateSelection(input.model, input.effort);
     this.preferredModel = selection.model;
     this.preferredEffort = selection.effort;
@@ -799,7 +825,7 @@ export class CodexService {
       // from inheriting a prior turn's broader workspace profile.
       approvalPolicy: 'never', approvalsReviewer: 'user',
       permissions: this.permissionProfiles.readOnly!,
-      developerInstructions: DEVELOPER_INSTRUCTIONS, ephemeral: false, threadSource: 'research-ide',
+      developerInstructions: this.developerInstructions(), ephemeral: false, threadSource: 'research-ide',
       ...(selection.model ? { model: selection.model } : {}),
     });
     const thread = isRecord(result) && isRecord(result.thread) ? result.thread : undefined;
@@ -867,6 +893,7 @@ export class CodexService {
 
   async resumeThread(threadId: string): Promise<CodexThreadView> {
     await this.start();
+    await this.refreshToolchainBridge();
     const id = this.validateThreadId(threadId);
     // Validate ownership before resuming. A renderer-provided UUID must never
     // be able to expose a conversation from another project in the app's
@@ -881,7 +908,7 @@ export class CodexService {
       approvalPolicy: 'never',
       approvalsReviewer: 'user',
       permissions: this.permissionProfiles.readOnly!,
-      developerInstructions: DEVELOPER_INSTRUCTIONS,
+      developerInstructions: this.developerInstructions(),
       excludeTurns: true,
       initialTurnsPage: { limit: CODEX_THREAD_HISTORY_LIMITS.pageTurns, sortDirection: 'desc', itemsView: 'full' },
     });
@@ -963,6 +990,7 @@ export class CodexService {
     const prompt = input.prompt.trim();
     if (!prompt || Buffer.byteLength(prompt) > 1024 * 1024) throw new AppError('INVALID_PROMPT', 'Prompt must be between 1 byte and 1 MB');
     const threadId = input.threadId || await this.newThread();
+    await this.refreshToolchainBridge();
     if (!this.threadIds.has(threadId)) throw new AppError('UNKNOWN_THREAD', 'Thread does not belong to the current project session');
     const context = validateContextPayload(input.contextFiles, input.contextBuffers);
     const selectedFiles = new Map<string, { absolute: string; relative: string }>();
@@ -1212,6 +1240,25 @@ export class CodexService {
       const nested = isRecord(params.error) ? params.error : undefined;
       this.emit({ type: 'error', message: this.redact(stringValue(nested?.message) ?? 'Codex reported an error') });
     }
+  }
+
+  private async refreshToolchainBridge(): Promise<void> {
+    if (!this.options.prepareToolchainBridge) return;
+    const next = await this.options.prepareToolchainBridge();
+    if (this.toolchainBridge && !sameCanonicalPath(this.toolchainBridge.path, next.path)) {
+      throw new AppError('CODEX_TOOL_BRIDGE_CHANGED', 'The Codex tool bridge moved while app-server was running; restart Codex before using project tools');
+    }
+    this.toolchainBridge = next;
+  }
+
+  private developerInstructions(): string {
+    const tools = this.toolchainBridge?.tools ?? [];
+    if (!tools.length) return DEVELOPER_INSTRUCTIONS;
+    const summary = tools.map((tool) => {
+      const version = tool.version ? ` (${tool.version.slice(0, 120)})` : '';
+      return `- ${tool.name}${version}: ${tool.commands.join(', ')}`;
+    }).join('\n');
+    return `${DEVELOPER_INSTRUCTIONS}\nResearch IDE exposes the following project-selected, host-verified toolchain commands on PATH:\n${summary}\nThese commands may be used only for the current project. Do not install, update, remove, or replace toolchains; those lifecycle operations remain user-only Research IDE actions.`;
   }
 
   private requireRpc(): CodexRpcClient {

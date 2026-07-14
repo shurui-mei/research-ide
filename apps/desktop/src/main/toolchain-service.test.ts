@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import TOML from '@iarna/toml';
@@ -53,6 +53,68 @@ afterEach(async () => {
 });
 
 describe('automatic project toolchain detection', () => {
+  it('prefers Unicode Chinese-capable LaTeX engines and keeps pdfLaTeX as the final fallback', () => {
+    expect(toolchainInternals.latexCandidates).toEqual([
+      'xelatex',
+      'lualatex',
+      'tectonic',
+      'latexmk',
+      'pdflatex',
+    ]);
+    expect(toolchainInternals.latexEngineDetail('xelatex')).toContain('中文');
+    expect(toolchainInternals.latexEngineDetail('lualatex')).toContain('中文');
+    expect(toolchainInternals.latexEngineDetail('tectonic')).toContain('中文');
+    expect(toolchainInternals.latexEngineDetail('latexmk')).toContain('XeLaTeX');
+    expect(toolchainInternals.latexEngineDetail('pdflatex')).toContain('回退');
+  });
+
+  it('uses XeLaTeX through latexmk and safe engine-specific compile arguments', () => {
+    const outputDirectory = path.join('tmp', 'build with spaces');
+
+    expect(toolchainInternals.latexArguments('latexmk.exe', outputDirectory, 'main.tex')).toEqual([
+      '-norc',
+      '-xelatex',
+      '-latexoption=-no-shell-escape',
+      '-latexoption=-interaction=nonstopmode',
+      '-latexoption=-halt-on-error',
+      '-latexoption=-file-line-error',
+      `-outdir=${outputDirectory}`,
+      'main.tex',
+    ]);
+    expect(toolchainInternals.latexArguments('tectonic.exe', outputDirectory, 'main.tex')).toEqual([
+      '--untrusted',
+      '--keep-logs',
+      '--outdir',
+      outputDirectory,
+      'main.tex',
+    ]);
+    for (const engine of ['xelatex', 'lualatex', 'pdflatex']) {
+      const args = toolchainInternals.latexArguments(engine, outputDirectory, 'main.tex');
+      expect(args).toContain('-no-shell-escape');
+      expect(args).toContain(`-output-directory=${outputDirectory}`);
+    }
+  });
+
+  it('builds a quoted Windows bridge wrapper without exposing a package installer', () => {
+    const source = toolchainInternals.windowsBridgeWrapper('C:\\Research IDE\\Python 3.13\\python.exe', {
+      PATH: 'C:\\Research IDE\\Python 3.13', CONDA_PREFIX: 'C:\\Research IDE\\Python 3.13',
+    });
+    expect(source).toContain('"C:\\Research IDE\\Python 3.13\\python.exe" %*');
+    expect(source).toContain('set "PATH=C:\\Research IDE\\Python 3.13;%PATH%"');
+    expect(source).toContain('set "CONDA_PREFIX=C:\\Research IDE\\Python 3.13"');
+    expect(source).not.toContain('install');
+  });
+
+  it('builds a POSIX bridge wrapper that preserves arguments and a verified activation environment', () => {
+    const source = toolchainInternals.posixBridgeWrapper("/opt/Research IDE/R's/bin/R", {
+      PATH: '/opt/Research IDE/R/bin', CONDA_PREFIX: "/opt/Research IDE/R's", UNSAFE: 'ignored',
+    });
+    expect(source).toContain(`PATH='/opt/Research IDE/R/bin':"\${PATH:-}"`);
+    expect(source).toContain(`CONDA_PREFIX='/opt/Research IDE/R'"'"'s'`);
+    expect(source).toContain(`exec '/opt/Research IDE/R'"'"'s/bin/R' "$@"`);
+    expect(source).not.toContain('UNSAFE');
+  });
+
   it('includes common macOS GUI tool locations without relying on a shell profile', () => {
     const directories = toolchainInternals.systemToolSearchDirectories('darwin', '/usr/bin');
     expect(directories).toEqual(expect.arrayContaining(['/Library/TeX/texbin', '/opt/homebrew/bin', '/Library/Frameworks/R.framework/Resources/bin']));
@@ -132,6 +194,34 @@ describe('automatic project toolchain detection', () => {
     await toolchains.ensureDetected();
 
     expect((await readFile(probes, 'utf8')).trim().split('\n')).toHaveLength(6);
+  });
+
+  it.skipIf(process.platform === 'win32')('exposes only verified project selections through the Codex tool bridge', async () => {
+    const { base, userData, toolchains } = await fixture();
+    const bin = await fastSystemToolPath(base);
+    process.env.PATH = bin;
+    await toolchains.selectSystem('python');
+
+    const bridge = await toolchains.prepareCodexBridge();
+
+    expect(bridge.path).toBe(await realpath(path.join(userData, 'codex-tool-bridge')));
+    expect(bridge.tools).toEqual([
+      expect.objectContaining({ id: 'python', commands: expect.arrayContaining(['python', 'python3', 'research-ide-python']) }),
+    ]);
+    const wrapper = await readFile(path.join(bridge.path, 'python'), 'utf8');
+    expect(wrapper).toContain(`exec '${await realpath(path.join(bin, 'python3'))}' "$@"`);
+    await expect(toolchainInternals.capture(path.join(bridge.path, 'python'), ['--version'], undefined, 7_000, path.join(base, 'project')))
+      .resolves.toMatchObject({ code: 0, stdout: 'trusted-system 1.0\n' });
+    await expect(readFile(path.join(bridge.path, 'research-ide-latex'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a redirected Codex tool bridge root', async () => {
+    const { base, userData, toolchains } = await fixture();
+    const outside = path.join(base, 'outside-bridge');
+    await mkdir(outside);
+    await symlink(outside, path.join(userData, 'codex-tool-bridge'), 'dir');
+
+    await expect(toolchains.prepareCodexBridge()).rejects.toMatchObject({ code: 'UNSAFE_CODEX_TOOL_BRIDGE' });
   });
 
   it.skipIf(process.platform === 'win32')('does not execute an unconfirmed custom path from project.toml', async () => {

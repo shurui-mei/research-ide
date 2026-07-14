@@ -149,7 +149,7 @@ describe('legacy DOC workflow', () => {
     const converter = new LibreOfficeConverter(base, { resolveExecutable: async () => undefined });
 
     await expect(converter.convert(Buffer.concat([OLE_SIGNATURE, Buffer.from('input')]), 'doc', 'docx'))
-      .rejects.toMatchObject({ code: 'LIBREOFFICE_NOT_FOUND', message: expect.stringMatching(/设置 → 工具链/u) });
+      .rejects.toMatchObject({ code: 'LIBREOFFICE_NOT_FOUND', message: expect.stringMatching(/设置 → 工具箱/u) });
   });
 
   it.skipIf(process.platform === 'win32')('preserves bounded LibreOffice diagnostics when conversion fails', async () => {
