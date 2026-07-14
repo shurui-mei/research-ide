@@ -1,4 +1,4 @@
-# Research IDE
+# Research IDE （开发中）
 
 Research IDE 是一个跨平台、local-first 的科研桌面工作台。它以“项目”为基本单元，把 LaTeX/代码写作、直接 `.doc`/`.docx` 论文编辑、PDF 阅读、文献管理、可并存版本的科研工具链和 Codex 协作放在同一个 Electron 应用中。
 
