@@ -124,8 +124,15 @@ describe('automatic project toolchain detection', () => {
 
   it.skipIf(process.platform === 'win32')('does not execute an unconfirmed custom path from project.toml', async () => {
     const { base, root, projects, toolchains } = await fixture();
+    const bin = path.join(base, 'bin');
     const sentinel = path.join(base, 'untrusted-ran');
     const executable = path.join(base, 'untrusted-python');
+    await mkdir(bin);
+    for (const command of ['latexmk', 'python3', 'R', 'pandoc', 'cc', 'julia']) {
+      const systemTool = path.join(bin, command);
+      await writeFile(systemTool, '#!/bin/sh\nprintf "trusted-system 1.0\\n"\n', 'utf8');
+      await chmod(systemTool, 0o700);
+    }
     await writeFile(executable, `#!/bin/sh\nprintf 'ran' > '${sentinel}'\nprintf 'untrusted 1.0\\n'\n`, 'utf8');
     await chmod(executable, 0o700);
     const configPath = path.join(root, '.research_ide', 'project.toml');
@@ -134,7 +141,9 @@ describe('automatic project toolchain detection', () => {
     await writeFile(configPath, TOML.stringify(config), 'utf8');
     await projects.close();
     await projects.open(root);
-    process.env.PATH = '';
+    // Give every automatic system probe a deterministic, immediate result so
+    // this test measures only whether the unconfirmed custom path is executed.
+    process.env.PATH = bin;
     toolchains.beginProjectSession();
 
     const tools = await toolchains.ensureDetected();
