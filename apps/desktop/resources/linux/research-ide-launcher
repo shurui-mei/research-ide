@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+SELF=$(readlink -f -- "$0")
+APP_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd -P)
+EXECUTABLE="$APP_DIR/research-ide"
+
+if [ ! -x "$EXECUTABLE" ]; then
+  echo "Research IDE executable is missing or not executable: $EXECUTABLE" >&2
+  exit 126
+fi
+
+# File managers provide a much smaller environment than an interactive shell.
+# Always use an absolute executable path, a stable working directory, and a
+# private fallback log. Never disable Electron's sandbox here.
+unset ELECTRON_RUN_AS_NODE
+unset NODE_OPTIONS
+umask 077
+STATE_HOME=${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}
+LOG_DIR="$STATE_HOME/research-ide"
+mkdir -p -- "$LOG_DIR"
+[ ! -L "$LOG_DIR" ] || { echo "Research IDE launcher log directory is an unsafe symbolic link: $LOG_DIR" >&2; exit 1; }
+STATE_MARKER="$LOG_DIR/.research-ide-launcher-state.json"
+if [ -e "$STATE_MARKER" ]; then
+  [ -f "$STATE_MARKER" ] && [ ! -L "$STATE_MARKER" ] || { echo "Research IDE launcher state marker is unsafe: $STATE_MARKER" >&2; exit 1; }
+else
+  printf '%s\n' '{"schemaVersion":1,"installId":"org.researchide.desktop","kind":"launcher-state"}' > "$STATE_MARKER"
+fi
+grep -Eq '"schemaVersion"[[:space:]]*:[[:space:]]*1([,[:space:]}]|$)' "$STATE_MARKER" &&
+  grep -Eq '"installId"[[:space:]]*:[[:space:]]*"org\.researchide\.desktop"([,[:space:]}]|$)' "$STATE_MARKER" &&
+  grep -Eq '"kind"[[:space:]]*:[[:space:]]*"launcher-state"([,[:space:]}]|$)' "$STATE_MARKER" || {
+    echo "Research IDE launcher state marker does not belong to this application: $STATE_MARKER" >&2
+    exit 1
+  }
+cd -- "${HOME:-/}"
+exec "$EXECUTABLE" "$@" >>"$LOG_DIR/launcher.log" 2>&1

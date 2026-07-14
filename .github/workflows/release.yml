@@ -1,0 +1,92 @@
+name: Build release artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  make:
+    name: Make (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux maker tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes fakeroot rpm
+
+      - name: Verify Linux maker tools
+        if: runner.os == 'Linux'
+        run: |
+          command -v fakeroot
+          command -v dpkg-deb
+          command -v rpmbuild
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify source
+        run: pnpm check
+
+      - name: Make installers
+        run: pnpm make
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-ide-${{ matrix.name }}
+          path: apps/desktop/out/make/**/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: make
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: research-ide-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish tagged release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

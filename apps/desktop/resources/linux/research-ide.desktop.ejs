@@ -1,0 +1,20 @@
+[Desktop Entry]
+Name=<%= productName %>
+Comment=<%= description %>
+GenericName=<%= genericName %>
+Exec=<%= name %> %U
+TryExec=<%= name %>
+Icon=<%= name %>
+Terminal=false
+Type=Application
+StartupNotify=true
+StartupWMClass=Research IDE
+Categories=<%= categories.join(';') %>;
+Actions=Uninstall;
+<% if (mimeType && mimeType.length) { %>MimeType=<%= mimeType.join(';') %>;
+<% } %>
+
+[Desktop Action Uninstall]
+Name=Uninstall Research IDE
+Name[zh_CN]=卸载 Research IDE
+Exec=/usr/lib/research-ide/uninstall-research-ide-gui

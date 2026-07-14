@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Uninstall Research IDE
+Name[zh_CN]=卸载 Research IDE
+Comment=Safely preview and uninstall Research IDE
+Comment[zh_CN]=预览并安全卸载 Research IDE
+Exec=/usr/bin/find %k -maxdepth 0 -execdir ./uninstall-research-ide-gui --desktop-file {} +
+Icon=research-ide
+Terminal=false
+StartupNotify=true
+Categories=System;

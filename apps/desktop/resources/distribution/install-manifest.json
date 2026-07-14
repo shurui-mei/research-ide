@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "installId": "org.researchide.desktop",
+  "kind": "application-installation",
+  "productName": "Research IDE",
+  "executableName": "research-ide"
+}

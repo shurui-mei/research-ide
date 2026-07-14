@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://research-ide.local/schemas/project.schema.json",
+  "title": "Research IDE project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "kind": {
+          "enum": ["blank", "latex", "paper"]
+        }
+      }
+    },
+    "paths": {
+      "$ref": "#/$defs/pathFilters"
+    },
+    "toolchains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latex": {
+          "$ref": "#/$defs/toolchainBinding"
+        },
+        "python": {
+          "$ref": "#/$defs/toolchainBinding"
+        },
+        "r": {
+          "$ref": "#/$defs/toolchainBinding"
+        },
+        "pandoc": {
+          "$ref": "#/$defs/toolchainBinding"
+        },
+        "compiler": {
+          "$ref": "#/$defs/toolchainBinding"
+        },
+        "julia": {
+          "$ref": "#/$defs/toolchainBinding"
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "include": {
+          "$ref": "#/$defs/globs"
+        },
+        "exclude": {
+          "$ref": "#/$defs/globs"
+        },
+        "max_snapshots": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "default": 50
+        }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approval_policy": {
+          "const": "always",
+          "default": "always"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "executablePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "toolchainBinding": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/executablePath"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "const": "system" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "path"],
+          "properties": {
+            "source": { "const": "managed" },
+            "path": { "$ref": "#/$defs/executablePath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "path"],
+          "properties": {
+            "source": { "const": "custom" },
+            "path": { "$ref": "#/$defs/executablePath" }
+          }
+        }
+      ]
+    },
+    "globs": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "uniqueItems": true
+    },
+    "pathFilters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "$ref": "#/$defs/globs"
+        },
+        "exclude": {
+          "$ref": "#/$defs/globs"
+        }
+      }
+    }
+  }
+}

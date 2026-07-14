@@ -1,0 +1,178 @@
+#!/bin/sh
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+SELF=$(readlink -f -- "$0")
+SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "$SELF")" && pwd -P)
+CLI="$SCRIPT_DIR/uninstall-research-ide.sh"
+[ -f "$CLI" ] && [ ! -L "$CLI" ] || { printf '%s\n' 'Research IDE CLI uninstaller is missing or unsafe.' >&2; exit 2; }
+
+INSTALL_DIR=''
+DATA_DIR=${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}/'Research IDE'
+STATE_DIR=${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}/research-ide
+TERMINAL_UI=0
+PAUSE=0
+
+reject_path_argument() {
+  case "$2" in *'
+'*|*'|'*) printf 'Unsafe %s path.\n' "$1" >&2; exit 2 ;; esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --terminal-ui) TERMINAL_UI=1 ;;
+    --pause) PAUSE=1 ;;
+    --install-dir|--data-dir|--state-dir)
+      [ "$#" -ge 2 ] || { printf '%s requires a path.\n' "$1" >&2; exit 2; }
+      reject_path_argument "$1" "$2"
+      case "$1" in
+        --install-dir) INSTALL_DIR=$2 ;;
+        --data-dir) DATA_DIR=$2 ;;
+        --state-dir) STATE_DIR=$2 ;;
+      esac
+      shift ;;
+    *) printf 'Unknown graphical uninstaller argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [ -z "$INSTALL_DIR" ]; then
+  APP_ROOT=$(CDPATH= cd -P -- "$SCRIPT_DIR/../.." 2>/dev/null && pwd -P || true)
+  if [ -n "$APP_ROOT" ] && [ -f "$APP_ROOT/resources/distribution/install-manifest.json" ] && [ -f "$APP_ROOT/research-ide" ]; then
+    INSTALL_DIR=$APP_ROOT
+  else
+    INSTALL_DIR=/usr/lib/research-ide
+  fi
+fi
+
+TITLE='卸载 Research IDE / Uninstall Research IDE'
+KEEP_LABEL='仅卸载应用，保留设置与工具链 / Keep local data'
+REMOVE_LABEL='卸载应用并删除本地数据 / Remove local data'
+CANCELLED='已取消；未更改任何文件。 / Cancelled; nothing was changed.'
+
+plan() {
+  if [ "$1" = keep ]; then
+    /bin/sh "$CLI" --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR" --keep-data --keep-state
+  else
+    /bin/sh "$CLI" --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  fi
+}
+
+execute_plan() {
+  auth=$1
+  scope=$2
+  if [ "$scope" = keep ]; then
+    /bin/sh "$CLI" --execute $auth --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR" --keep-data --keep-state
+  else
+    /bin/sh "$CLI" --execute $auth --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  fi
+}
+
+terminal_flow() {
+  printf '\n%s\n\n1) %s\n2) %s\n0) Cancel\n> ' "$TITLE" "$KEEP_LABEL" "$REMOVE_LABEL"
+  IFS= read -r choice || choice=0
+  case "$choice" in 1) scope=keep ;; 2) scope=remove ;; *) printf '%s\n' "$CANCELLED"; return 0 ;; esac
+  set +e
+  dry_run=$(plan "$scope" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then printf '\nValidation failed:\n%s\n' "$dry_run"; return "$status"; fi
+  printf '\n%s\n\nResearch projects are never removed by this graphical entry.\n' "$dry_run"
+  printf 'Type UNINSTALL to apply this plan, or press Enter to cancel:\n> '
+  IFS= read -r confirmation || confirmation=''
+  if [ "$confirmation" != UNINSTALL ]; then printf '%s\n' "$CANCELLED"; return 0; fi
+  set +e
+  result=$(execute_plan '' "$scope" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then printf '\nUninstall completed.\n%s\n' "$result"; else printf '\nUninstall failed (exit %s):\n%s\n' "$status" "$result"; fi
+  if [ "$PAUSE" -eq 1 ]; then printf '\nPress Enter to close.\n'; IFS= read -r _ignored || true; fi
+  return "$status"
+}
+
+if [ "$TERMINAL_UI" -eq 1 ] || { [ -t 0 ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }; then
+  terminal_flow
+  exit $?
+fi
+
+BACKEND=${RESEARCH_IDE_UNINSTALL_UI:-}
+if [ -z "$BACKEND" ]; then
+  if command -v zenity >/dev/null 2>&1; then BACKEND=zenity
+  elif command -v kdialog >/dev/null 2>&1; then BACKEND=kdialog
+  elif command -v xmessage >/dev/null 2>&1; then BACKEND=xmessage
+  else BACKEND=terminal
+  fi
+fi
+
+if [ "$BACKEND" = terminal ]; then
+  if command -v gnome-terminal >/dev/null 2>&1; then
+    exec gnome-terminal --wait -- /bin/sh "$SELF" --terminal-ui --pause --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  elif command -v x-terminal-emulator >/dev/null 2>&1; then
+    exec x-terminal-emulator -e /bin/sh "$SELF" --terminal-ui --pause --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  elif command -v konsole >/dev/null 2>&1; then
+    exec konsole --hold -e /bin/sh "$SELF" --terminal-ui --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  elif command -v xterm >/dev/null 2>&1; then
+    exec xterm -hold -e /bin/sh "$SELF" --terminal-ui --install-dir "$INSTALL_DIR" --data-dir "$DATA_DIR" --state-dir "$STATE_DIR"
+  fi
+  printf '%s\n' 'No supported dialog or terminal program is available. Run uninstall-research-ide.sh in a terminal.' >&2
+  exit 3
+fi
+
+show_info() {
+  case "$BACKEND" in
+    zenity) zenity --info --no-markup --title="$TITLE" --text="$1" 2>/dev/null || true ;;
+    kdialog) kdialog --title "$TITLE" --msgbox "$1" 2>/dev/null || true ;;
+    xmessage) xmessage -center -title "$TITLE" -buttons 'OK:0' "$1" 2>/dev/null || true ;;
+  esac
+}
+
+show_error() {
+  case "$BACKEND" in
+    zenity) zenity --error --no-markup --title="$TITLE" --text="$1" 2>/dev/null || true ;;
+    kdialog) kdialog --title "$TITLE" --error "$1" 2>/dev/null || true ;;
+    xmessage) xmessage -center -title "$TITLE" -buttons 'OK:0' "$1" 2>/dev/null || true ;;
+  esac
+}
+
+case "$BACKEND" in
+  zenity)
+    set +e
+    scope=$(zenity --list --radiolist --title="$TITLE" --text='请选择卸载范围 / Choose what to remove' \
+      --column='' --column='scope' --column='选项 / Option' --hide-column=2 --print-column=2 \
+      TRUE keep "$KEEP_LABEL" FALSE remove "$REMOVE_LABEL" 2>/dev/null)
+    status=$?
+    set -e
+    ;;
+  kdialog)
+    set +e; scope=$(kdialog --title "$TITLE" --menu '请选择卸载范围 / Choose what to remove' keep "$KEEP_LABEL" remove "$REMOVE_LABEL" 2>/dev/null); status=$?; set -e
+    ;;
+  xmessage)
+    set +e; xmessage -center -title "$TITLE" -buttons 'Keep data:10,Remove local data:11,Cancel:1' 'Choose what to remove. Research projects are always kept.' 2>/dev/null; status=$?; set -e
+    case "$status" in 10) scope=keep; status=0 ;; 11) scope=remove; status=0 ;; esac
+    ;;
+  *) printf 'Unsupported dialog backend: %s\n' "$BACKEND" >&2; exit 3 ;;
+esac
+
+if [ "$status" -ne 0 ] || { [ "$scope" != keep ] && [ "$scope" != remove ]; }; then show_info "$CANCELLED"; exit 0; fi
+set +e; dry_run=$(plan "$scope" 2>&1); status=$?; set -e
+if [ "$status" -ne 0 ]; then show_error "Validation failed; nothing was changed.\n\n$dry_run"; exit "$status"; fi
+
+CONFIRM_TEXT="$dry_run
+
+Research projects are never removed by this graphical entry.
+确认后可能出现系统授权窗口。 / System authorization may be requested."
+case "$BACKEND" in
+  zenity) set +e; zenity --question --no-markup --title="$TITLE" --ok-label='确认卸载 / Uninstall' --cancel-label='取消 / Cancel' --text="$CONFIRM_TEXT" 2>/dev/null; status=$?; set -e ;;
+  kdialog) set +e; kdialog --title "$TITLE" --warningyesno "$CONFIRM_TEXT" --yes-label 'Uninstall' --no-label 'Cancel' 2>/dev/null; status=$?; set -e ;;
+  xmessage) set +e; xmessage -center -title "$TITLE" -buttons 'Uninstall:10,Cancel:1' "$CONFIRM_TEXT" 2>/dev/null; status=$?; set -e; [ "$status" -eq 10 ] && status=0 ;;
+esac
+if [ "$status" -ne 0 ]; then show_info "$CANCELLED"; exit 0; fi
+
+set +e; result=$(execute_plan '--graphical-auth' "$scope" 2>&1); status=$?; set -e
+if [ "$status" -eq 0 ]; then
+  show_info "卸载已完成。 / Uninstall completed.\n\n$result"
+else
+  show_error "卸载失败（退出码 $status）。未完成的目标已保留。\nUninstall failed; unfinished targets were kept.\n\n$result"
+fi
+exit "$status"

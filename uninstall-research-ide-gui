@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+ROOT=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P)
+if [ "${1:-}" = --desktop-file ]; then
+  [ "$#" -ge 2 ] || { printf '%s\n' '--desktop-file requires a path.' >&2; exit 2; }
+  DESKTOP_FILE=$2
+  [ -f "$DESKTOP_FILE" ] && [ ! -L "$DESKTOP_FILE" ] || { printf '%s\n' 'Uninstall desktop entry is missing or unsafe.' >&2; exit 2; }
+  [ "$(basename -- "$DESKTOP_FILE")" = 'Uninstall Research IDE.desktop' ] || { printf '%s\n' 'Uninstall desktop entry name is invalid.' >&2; exit 2; }
+  DESKTOP_DIR=$(CDPATH= cd -P -- "$(dirname -- "$DESKTOP_FILE")" && pwd -P)
+  [ "$DESKTOP_DIR" = "$ROOT" ] || { printf '%s\n' 'Uninstall desktop entry is not beside its launcher.' >&2; exit 2; }
+  shift 2
+fi
+if [ -x "$ROOT/resources/uninstall/uninstall-research-ide-gui" ]; then
+  exec "$ROOT/resources/uninstall/uninstall-research-ide-gui" --install-dir "$ROOT" "$@"
+fi
+GUI="$ROOT/apps/desktop/resources/uninstall/uninstall-research-ide-gui"
+[ -x "$GUI" ] || { printf '%s\n' 'Research IDE graphical uninstaller is missing.' >&2; exit 2; }
+exec "$GUI" --install-dir /usr/lib/research-ide "$@"

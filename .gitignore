@@ -1,0 +1,31 @@
+node_modules/
+.pnpm-store/
+
+# Build and packaging output
+.vite/
+.forge-tmp/
+dist/
+out/
+release/
+coverage/
+*.tsbuildinfo
+
+# Test output
+playwright-report/
+test-results/
+blob-report/
+
+# Local project state and secrets
+.research_ide/
+.env
+.env.*
+!.env.example
+*.log
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
