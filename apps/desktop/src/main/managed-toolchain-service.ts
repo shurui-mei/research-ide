@@ -5,6 +5,7 @@ import { access, chmod, lstat, mkdir, open, readdir, realpath, rename, rm, stat,
 import path from 'node:path';
 import type { ManagedToolchainCatalog, ManagedToolchainEvent, ManagedToolchainVersion } from '../shared/types';
 import { AppError } from './errors';
+import { flushFileHandle, syncParentDirectory } from './file-durability';
 import { detachedProcessGroup, processTreeAlive, signalProcessTree } from './process-tree';
 import type { ProjectToolchainId } from './project-service';
 
@@ -263,7 +264,7 @@ async function downloadFile(raw: string, target: string, maxBytes: number, progr
           offset += result.bytesWritten;
         }
       }, progress);
-      await handle.sync();
+      await flushFileHandle(handle);
       return { sha256: digest.digest('hex'), size };
     } finally {
       await handle.close();
@@ -348,11 +349,18 @@ async function atomicJson(target: string, value: unknown, assertParent: () => Pr
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
     await assertParent();
-    await writeFile(temporary, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    const handle = await open(temporary, 'r');
-    try { await handle.sync(); } finally { await handle.close(); }
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(value, null, 2), 'utf8');
+      await flushFileHandle(handle);
+    } finally {
+      await handle.close();
+    }
     await assertParent();
     await replaceFileWithinVerifiedParent(temporary, target, assertParent);
+    await assertParent();
+    await syncParentDirectory(target);
+    await assertParent();
   } finally { await rm(temporary, { force: true }); }
 }
 
@@ -794,6 +802,7 @@ export class ManagedToolchainService {
       await this.assertDirectoryIdentity(versionDirectory);
       if (current) await rm(executable, { force: true });
       await rename(temporary, executable);
+      await syncParentDirectory(executable);
       const record: PixiRecord = { schemaVersion: 1, version, executable: path.relative(managerRoot, executable).split(path.sep).join('/'), sha256: expected };
       await atomicJson(recordPath, record, () => this.assertDirectoryIdentity(managerDirectory));
       await this.assertDirectoryIdentity(managerDirectory);

@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 import type { LibreOfficeExecutableStatus } from '../shared/types';
 import { AppError } from './errors';
+import { flushFileHandle, syncParentDirectory } from './file-durability';
 
 const RECORD_SCHEMA_VERSION = 1;
 const MAX_RECORD_BYTES = 16 * 1024;
@@ -336,7 +337,7 @@ export class LibreOfficeExecutableStore {
       const handle = await open(temporary, 'wx', 0o600);
       try {
         await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`, 'utf8');
-        await handle.sync();
+        await flushFileHandle(handle);
       } finally {
         await handle.close();
       }
@@ -360,6 +361,7 @@ export class LibreOfficeExecutableStore {
           throw replacementError;
         }
       }
+      await syncParentDirectory(target);
       await this.assertDirectoryIdentity(directory);
     } finally {
       await rm(temporary, { force: true, recursive: false });

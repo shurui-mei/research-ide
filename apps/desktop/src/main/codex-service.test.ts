@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -155,6 +155,15 @@ describe('Codex app-server response mapping', () => {
         writeFile(outsideExecutable, '#!/bin/sh\nexit 0\n', 'utf8'),
       ]);
       await Promise.all([chmod(projectExecutable, 0o700), chmod(outsideExecutable, 0o700)]);
+
+      expect(__codexInternals.sameCanonicalPath(projectRoot, projectRoot)).toBe(true);
+      expect(__codexInternals.sameCanonicalPath(projectRoot, outsideBin)).toBe(false);
+      expect(__codexInternals.sameCanonicalPath(projectRoot, path.join(base, 'missing'))).toBe(false);
+      if (process.platform !== 'win32') {
+        const projectAlias = path.join(base, 'project-alias');
+        await symlink(projectRoot, projectAlias, 'dir');
+        expect(__codexInternals.sameCanonicalPath(projectRoot, projectAlias)).toBe(true);
+      }
 
       expect(__codexInternals.trustedPathFile(projectRoot, [name], {
         pathValue: projectBin, platform: process.platform,
@@ -394,7 +403,7 @@ describe('Codex app-server response mapping', () => {
       expect(records.find((record) => record.rpc?.method === 'thread/delete')?.rpc?.params).toEqual({ threadId: 'thread-delete' });
       expect(records[0].launchArgs?.join(' ')).toContain('auto_review.policy=');
       const resumed = records.find((record) => record.rpc?.method === 'thread/resume')?.rpc?.params;
-      expect(resumed).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', permissions: ':read-only', cwd: projectRoot });
+      expect(resumed).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', permissions: ':read-only', cwd: projects.guard.root });
       expect(resumed?.initialTurnsPage).toEqual({ limit: 50, sortDirection: 'desc', itemsView: 'full' });
       const historyRequests = records.filter((record) => record.rpc?.method === 'thread/turns/list').map((record) => record.rpc?.params);
       expect(historyRequests).toEqual(expect.arrayContaining([
@@ -403,7 +412,7 @@ describe('Codex app-server response mapping', () => {
       ]));
       expect(historyRequests.filter((params) => params?.threadId === 'thread-loop')).toHaveLength(2);
       const turn = [...records].reverse().find((record) => record.rpc?.method === 'turn/start')?.rpc?.params as { input?: Array<Record<string, unknown>> } | undefined;
-      expect(turn).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', permissions: ':workspace', model: 'model-a', effort: 'high', cwd: projectRoot });
+      expect(turn).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', permissions: ':workspace', model: 'model-a', effort: 'high', cwd: projects.guard.root });
       expect(turn?.input?.some((item) => item.type === 'mention' && item.name === 'saved.md')).toBe(true);
       expect(turn?.input?.some((item) => item.type === 'mention' && item.name === 'dirty.md')).toBe(false);
       const unsaved = turn?.input?.find((item) => item.type === 'text' && String(item.text).includes('UNTRUSTED PROJECT CONTENT'));

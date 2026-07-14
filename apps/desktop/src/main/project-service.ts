@@ -9,6 +9,7 @@ import type { FileNode, ProjectKind, ProjectSummary, SearchResult, WorkspaceChan
 import { ProjectDatabase } from './database';
 import { createDocxBuffer } from './docx-service';
 import { AppError } from './errors';
+import { flushFileHandle, syncParentDirectory } from './file-durability';
 import { ProjectPathGuard, validateRelativePath } from './path-guard';
 
 const META_DIR = '.research_ide';
@@ -266,7 +267,7 @@ export class ProjectService {
     try {
       handle = await open(temporary, 'wx', 0o600);
       await handle.writeFile(serialized, 'utf8');
-      await handle.sync();
+      await flushFileHandle(handle);
       await handle.close();
       handle = undefined;
       const currentInfo = await lstat(configPath);
@@ -274,6 +275,7 @@ export class ProjectService {
         throw new AppError('PROJECT_CONFIG_CHANGED', 'project.toml changed while updating its toolchain binding');
       }
       await rename(temporary, configPath);
+      await syncParentDirectory(configPath);
     } finally {
       await handle?.close().catch(() => undefined);
       await rm(temporary, { force: true });
@@ -529,7 +531,7 @@ export class ProjectService {
         try {
           handle = await open(temporary, 'wx', 0o600);
           await handle.writeFile(expectedSchema, 'utf8');
-          await handle.sync();
+          await flushFileHandle(handle);
           await handle.close();
           handle = undefined;
           const currentInfo = await lstat(schemaPath);
@@ -537,6 +539,7 @@ export class ProjectService {
             throw new AppError('UNSAFE_PROJECT_METADATA', 'project.schema.json changed while it was being refreshed');
           }
           await rename(temporary, schemaPath);
+          await syncParentDirectory(schemaPath);
         } finally {
           await handle?.close().catch(() => undefined);
           await rm(temporary, { force: true });

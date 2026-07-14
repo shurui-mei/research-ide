@@ -21,6 +21,7 @@ import mammoth from 'mammoth';
 import type { DocxCompatibilityWarning, DocxOpenResult, DocxSaveRequest, DocxSaveResult } from '../shared/types';
 import { createDocxBuffer, openDocxBuffer } from './docx-service';
 import { AppError } from './errors';
+import { flushFileHandle, syncParentDirectory } from './file-durability';
 import { detachedProcessGroup, processTreeAlive, signalProcessTree } from './process-tree';
 import type { ProjectService } from './project-service';
 import type { SnapshotService } from './snapshot-service';
@@ -441,15 +442,23 @@ export class LegacyDocService {
     if (sha256(beforeSnapshot) !== observed.hash) throw new AppError('FILE_CHANGED_ON_DISK', `${normalized} changed outside Research IDE while it was being converted; reload before saving`);
     const snapshot = await this.snapshots.create([normalized], `DOC before save · ${path.basename(normalized)}`);
     const temporary = `${target}.research-ide-${randomUUID()}.tmp`;
+    let committed = false;
     try {
-      await writeFile(temporary, replacement, { mode: 0o600, flag: 'wx' });
-      const handle = await open(temporary, 'r');
-      try { await handle.sync(); } finally { await handle.close(); }
+      const handle = await open(temporary, 'wx', 0o600);
+      try {
+        await handle.writeFile(replacement);
+        await flushFileHandle(handle);
+      } finally {
+        await handle.close();
+      }
       const latest = await readFile(target);
       if (sha256(latest) !== observed.hash) throw new AppError('FILE_CHANGED_ON_DISK', `${normalized} changed outside Research IDE while it was being saved; reload before saving`);
       await rename(temporary, target);
+      committed = true;
+      await syncParentDirectory(target);
     } catch (error) {
       if (error instanceof AppError) throw error;
+      if (committed) throw new AppError('DOC_SAVE_DURABILITY_FAILED', `The DOC was replaced, but its directory could not be synchronized; reload it before continuing: ${error instanceof Error ? error.message : 'unknown file error'}`);
       throw new AppError('DOC_SAVE_FAILED', `The DOC was not changed because the replacement could not be committed: ${error instanceof Error ? error.message : 'unknown file error'}`);
     } finally {
       await rm(temporary, { force: true });

@@ -22,21 +22,21 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
-          - os: macos-latest
+          - os: macos-15
             name: macos
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.15.4
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -62,7 +62,7 @@ jobs:
         run: pnpm make
 
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: research-ide-${{ matrix.name }}
           path: apps/desktop/out/make/**/*
@@ -78,14 +78,14 @@ jobs:
       contents: write
     steps:
       - name: Download installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: research-ide-*
           path: release-artifacts
           merge-multiple: true
 
       - name: Publish tagged release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release-artifacts/**/*
           fail_on_unmatched_files: true

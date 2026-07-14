@@ -49,15 +49,31 @@ async function runGuiUninstaller(args: string[], home: string, input: string): P
   });
 }
 
-async function fixture(): Promise<{ base: string; install: string; data: string; state: string; project: string }> {
+async function fixture(): Promise<{
+  base: string;
+  install: string;
+  executable: string;
+  data: string;
+  state: string;
+  project: string;
+}> {
   const base = await mkdtemp(path.join(tmpdir(), 'research-ide-uninstall-'));
   roots.push(base);
-  const install = path.join(base, 'research-ide');
+  const install = process.platform === 'darwin'
+    ? path.join(base, 'Research IDE.app')
+    : path.join(base, 'research-ide');
+  const distribution = process.platform === 'darwin'
+    ? path.join(install, 'Contents', 'Resources', 'distribution')
+    : path.join(install, 'resources', 'distribution');
+  const executable = process.platform === 'darwin'
+    ? path.join(install, 'Contents', 'MacOS', 'research-ide')
+    : path.join(install, 'research-ide');
   const data = path.join(base, 'Research IDE');
   const state = path.join(base, '.local', 'state', 'research-ide');
   const project = path.join(base, 'paper');
   await Promise.all([
-    mkdir(path.join(install, 'resources', 'distribution'), { recursive: true }),
+    mkdir(distribution, { recursive: true }),
+    mkdir(path.dirname(executable), { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
     mkdir(path.join(project, '.research_ide'), { recursive: true }),
@@ -66,15 +82,15 @@ async function fixture(): Promise<{ base: string; install: string; data: string;
   const dataMarker = { schemaVersion: 1, installId: 'org.researchide.desktop', kind: 'application-data' };
   const stateMarker = { schemaVersion: 1, installId: 'org.researchide.desktop', kind: 'launcher-state' };
   await Promise.all([
-    writeFile(path.join(install, 'resources', 'distribution', 'install-manifest.json'), `${JSON.stringify(installMarker, null, 2)}\n`, 'utf8'),
-    writeFile(path.join(install, 'research-ide'), '#!/bin/sh\n', 'utf8'),
+    writeFile(path.join(distribution, 'install-manifest.json'), `${JSON.stringify(installMarker, null, 2)}\n`, 'utf8'),
+    writeFile(executable, '#!/bin/sh\n', 'utf8'),
     writeFile(path.join(data, '.research-ide-app-data.json'), `${JSON.stringify(dataMarker, null, 2)}\n`, 'utf8'),
     writeFile(path.join(state, '.research-ide-launcher-state.json'), `${JSON.stringify(stateMarker)}\n`, 'utf8'),
     writeFile(path.join(project, '.research_ide', 'project.toml'), 'schema_version = 1\n\n[project]\nid = "project-1"\nname = "paper"\n', 'utf8'),
     writeFile(path.join(project, '.research_ide', 'project.schema.json'), JSON.stringify({ $id: 'https://research-ide.local/schemas/project.schema.json' }), 'utf8'),
   ]);
-  await chmod(path.join(install, 'research-ide'), 0o700);
-  return { base, install, data, state, project };
+  await chmod(executable, 0o700);
+  return { base, install, executable, data, state, project };
 }
 
 afterEach(async () => {
@@ -82,7 +98,9 @@ afterEach(async () => {
 });
 
 describe('distribution uninstallers', () => {
-  it('uses a dry run by default and preserves projects without the deletion opt-in', async () => {
+  const posixIt = process.platform === 'win32' ? it.skip : it;
+
+  posixIt('uses a dry run by default and preserves projects without the deletion opt-in', async () => {
     const { base, install, data, project } = await fixture();
     const result = await runUninstaller([
       '--install-dir', install, '--data-dir', data, '--project', project,
@@ -94,19 +112,19 @@ describe('distribution uninstallers', () => {
     await expect(readFile(path.join(project, '.research_ide', 'project.toml'), 'utf8')).resolves.toContain('project-1');
   });
 
-  it('removes a marked custom installation and app data while keeping projects by default', async () => {
-    const { base, install, data, state, project } = await fixture();
+  posixIt('removes a marked custom installation and app data while keeping projects by default', async () => {
+    const { base, install, executable, data, state, project } = await fixture();
     const result = await runUninstaller([
-      '--execute', '--install-dir', install, '--data-dir', data, '--project', project,
+      '--execute', '--install-dir', install, '--data-dir', data, '--state-dir', state, '--project', project,
     ], base);
     expect(result).toMatchObject({ code: 0 });
-    await expect(readFile(path.join(install, 'research-ide'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(executable, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(path.join(data, '.research-ide-app-data.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(path.join(state, '.research-ide-launcher-state.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(path.join(project, '.research_ide', 'project.toml'), 'utf8')).resolves.toContain('project-1');
   });
 
-  it('deletes a doubly marked project only after opt-in and exact canonical confirmation', async () => {
+  posixIt('deletes a doubly marked project only after opt-in and exact canonical confirmation', async () => {
     const { base, install, data, project } = await fixture();
     const refused = await runUninstaller([
       '--install-dir', install, '--data-dir', data, '--project', project,
@@ -124,28 +142,28 @@ describe('distribution uninstallers', () => {
     await expect(readFile(path.join(project, '.research_ide', 'project.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('graphical terminal fallback previews, requires exact confirmation, and keeps data by default choice', async () => {
-    const { base, install, data, state } = await fixture();
+  posixIt('graphical terminal fallback previews, requires exact confirmation, and keeps data by default choice', async () => {
+    const { base, install, executable, data, state } = await fixture();
     const cancelled = await runGuiUninstaller([
       '--install-dir', install, '--data-dir', data, '--state-dir', state,
     ], base, '1\n\n');
     expect(cancelled).toMatchObject({ code: 0 });
     expect(cancelled.output).toContain('PLAN installation');
     expect(cancelled.output).toContain('Cancelled; nothing was changed');
-    await expect(readFile(path.join(install, 'research-ide'), 'utf8')).resolves.toBeTruthy();
+    await expect(readFile(executable, 'utf8')).resolves.toBeTruthy();
 
     const accepted = await runGuiUninstaller([
       '--install-dir', install, '--data-dir', data, '--state-dir', state,
     ], base, '1\nUNINSTALL\n');
     expect(accepted).toMatchObject({ code: 0 });
     expect(accepted.output).toContain('Uninstall completed');
-    await expect(readFile(path.join(install, 'research-ide'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(executable, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(path.join(data, '.research-ide-app-data.json'), 'utf8')).resolves.toBeTruthy();
     await expect(readFile(path.join(state, '.research-ide-launcher-state.json'), 'utf8')).resolves.toBeTruthy();
   });
 
-  it('refuses dangerous, symbolic-link, and mismatched installation targets', async () => {
-    const { base, install } = await fixture();
+  posixIt('refuses dangerous, symbolic-link, and mismatched installation targets', async () => {
+    const { base, install, executable } = await fixture();
     expect((await runUninstaller(['--install-dir', '/', '--keep-data'], base)).code).toBe(2);
     expect((await runUninstaller(['--install-dir', base, '--keep-data'], base)).code).toBe(2);
     expect((await runUninstaller(['--install-dir', `${install}\nsecond-path`, '--keep-data'], base)).code).toBe(2);
@@ -154,11 +172,14 @@ describe('distribution uninstallers', () => {
     await symlink(install, link);
     expect((await runUninstaller(['--install-dir', link, '--keep-data'], base)).code).toBe(2);
 
-    await writeFile(path.join(install, 'resources', 'distribution', 'install-manifest.json'), '{"installId":"another.app"}\n', 'utf8');
+    const marker = process.platform === 'darwin'
+      ? path.join(install, 'Contents', 'Resources', 'distribution', 'install-manifest.json')
+      : path.join(install, 'resources', 'distribution', 'install-manifest.json');
+    await writeFile(marker, '{"installId":"another.app"}\n', 'utf8');
     const mismatch = await runUninstaller(['--install-dir', install, '--keep-data'], base);
     expect(mismatch.code).toBe(2);
     expect(mismatch.output).toContain('marker schema mismatch');
-    await expect(readFile(path.join(install, 'research-ide'), 'utf8')).resolves.toBeTruthy();
+    await expect(readFile(executable, 'utf8')).resolves.toBeTruthy();
   });
 
   it('ships a PowerShell path with equivalent marker, reparse-point, dry-run, and project-confirmation guards', async () => {

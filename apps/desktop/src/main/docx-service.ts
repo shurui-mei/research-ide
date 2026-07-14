@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { open, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   AlignmentType,
@@ -30,6 +30,7 @@ import type { DocxCompatibilityWarning, DocxOpenResult, DocxSaveRequest, DocxSav
 import { AppError } from './errors';
 import type { ProjectService } from './project-service';
 import type { SnapshotService } from './snapshot-service';
+import { flushFileHandle, syncParentDirectory } from './file-durability';
 
 const MAX_DOCX_BYTES = 100 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024;
@@ -1042,15 +1043,23 @@ export class DocxService {
     if (sha256(current) !== observed.hash) throw new AppError('FILE_CHANGED_ON_DISK', `${normalized} changed outside Research IDE; reload before saving`);
     const snapshot = await this.snapshots.create([normalized], `DOCX before save · ${path.basename(normalized)}`);
     const temporary = `${target}.research-ide-${randomUUID()}.tmp`;
+    let committed = false;
     try {
-      await writeFile(temporary, replacement, { mode: 0o600, flag: 'wx' });
-      const handle = await open(temporary, 'r');
-      try { await handle.sync(); } finally { await handle.close(); }
+      const handle = await open(temporary, 'wx', 0o600);
+      try {
+        await handle.writeFile(replacement);
+        await flushFileHandle(handle);
+      } finally {
+        await handle.close();
+      }
       const latest = await readFile(target);
       if (sha256(latest) !== observed.hash) throw new AppError('FILE_CHANGED_ON_DISK', `${normalized} changed outside Research IDE while it was being saved; reload before saving`);
       await rename(temporary, target);
+      committed = true;
+      await syncParentDirectory(target);
     } catch (error) {
       if (error instanceof AppError) throw error;
+      if (committed) throw new AppError('DOCX_SAVE_DURABILITY_FAILED', `The DOCX was replaced, but its directory could not be synchronized; reload it before continuing: ${error instanceof Error ? error.message : 'unknown file error'}`);
       throw new AppError('DOCX_SAVE_FAILED', `The DOCX was not changed because the replacement could not be committed: ${error instanceof Error ? error.message : 'unknown file error'}`);
     } finally {
       await rm(temporary, { force: true });

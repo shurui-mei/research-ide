@@ -33,6 +33,28 @@ function isRecord(value: unknown): value is JsonRecord { return value !== null &
 function stringValue(value: unknown): string | undefined { return typeof value === 'string' ? value : undefined; }
 function numberValue(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined; }
 
+function canonicalPathSync(value: string): string {
+  // The native implementation expands Windows 8.3 components consistently
+  // with fs.promises.realpath. The JavaScript implementation can preserve a
+  // short parent component, making two names for the same object compare as
+  // different strings on Windows runners.
+  return realpathSync.native(path.resolve(value));
+}
+
+function sameCanonicalPath(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
+  try {
+    const canonicalLeft = path.normalize(canonicalPathSync(left));
+    const canonicalRight = path.normalize(canonicalPathSync(right));
+    return platform === 'win32'
+      ? canonicalLeft.toLocaleLowerCase('en-US') === canonicalRight.toLocaleLowerCase('en-US')
+      : canonicalLeft === canonicalRight;
+  } catch {
+    // Project identity checks must fail closed if either path no longer exists
+    // or cannot be resolved.
+    return false;
+  }
+}
+
 export interface CodexCommand {
   executable: string;
   prefixArgs: string[];
@@ -75,7 +97,8 @@ function trustedPathFile(
   options: { platform?: NodeJS.Platform; pathValue?: string } = {},
 ): string | undefined {
   const platform = options.platform ?? process.platform;
-  const canonicalRoot = (() => { try { return realpathSync(projectRoot); } catch { return path.resolve(projectRoot); } })();
+  const canonicalRoot = (() => { try { return canonicalPathSync(projectRoot); } catch { return undefined; } })();
+  if (!canonicalRoot) return undefined;
   for (const directory of codexSystemSearchDirectories(platform, options.pathValue ?? process.env.PATH)) {
     if (!directory || !path.isAbsolute(directory)) continue;
     for (const name of names) {
@@ -84,7 +107,7 @@ function trustedPathFile(
         const info = lstatSync(candidate);
         if (!info.isFile() && !info.isSymbolicLink()) continue;
         accessSync(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK);
-        const canonical = realpathSync(candidate);
+        const canonical = canonicalPathSync(candidate);
         if (isOutsideProject(canonicalRoot, canonical)) return canonical;
       } catch { /* Try the next absolute PATH entry. */ }
     }
@@ -98,12 +121,13 @@ function codexChildPathDirectories(
   platform: NodeJS.Platform = process.platform,
   pathValue = process.env.PATH,
 ): string[] {
-  const canonicalRoot = (() => { try { return realpathSync(projectRoot); } catch { return path.resolve(projectRoot); } })();
+  const canonicalRoot = (() => { try { return canonicalPathSync(projectRoot); } catch { return undefined; } })();
+  if (!canonicalRoot) return [];
   const seen = new Set<string>();
   const directories: string[] = [];
   for (const directory of [path.dirname(executable), ...codexSystemSearchDirectories(platform, pathValue)]) {
     try {
-      const canonical = realpathSync(path.resolve(directory));
+      const canonical = canonicalPathSync(directory);
       if (!isOutsideProject(canonicalRoot, canonical)) continue;
       const key = platform === 'win32' ? canonical.toLocaleLowerCase('en-US') : canonical;
       if (seen.has(key)) continue;
@@ -127,7 +151,7 @@ function resolveCodexCommand(projectRoot: string): CodexCommand {
       const entry = path.join(directory, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
       try {
         if (!lstatSync(shim).isFile()) continue;
-        const canonicalEntry = realpathSync(entry);
+        const canonicalEntry = canonicalPathSync(entry);
         if (!lstatSync(canonicalEntry).isFile()) continue;
         const relative = path.relative(projectRoot, canonicalEntry);
         if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) continue;
@@ -935,7 +959,7 @@ export class CodexService {
 
   async send(input: CodexSendInput): Promise<{ threadId: string; messageId: string }> {
     if (!input || typeof input !== 'object' || typeof input.prompt !== 'string' || typeof input.projectPath !== 'string' || !['ask', 'agent'].includes(input.mode)) throw new AppError('INVALID_CODEX_REQUEST', 'Codex request is invalid');
-    if (path.resolve(input.projectPath) !== this.projects.guard.root) throw new AppError('PROJECT_MISMATCH', 'Codex request does not match the open project');
+    if (!sameCanonicalPath(input.projectPath, this.projects.guard.root)) throw new AppError('PROJECT_MISMATCH', 'Codex request does not match the open project');
     const prompt = input.prompt.trim();
     if (!prompt || Buffer.byteLength(prompt) > 1024 * 1024) throw new AppError('INVALID_PROMPT', 'Prompt must be between 1 byte and 1 MB');
     const threadId = input.threadId || await this.newThread();
@@ -1273,7 +1297,7 @@ export class CodexService {
   private threadBelongsToProject(value: unknown): value is JsonRecord {
     if (!isRecord(value)) return false;
     const cwd = stringValue(value.cwd);
-    return !!cwd && path.resolve(cwd) === this.projects.guard.root;
+    return !!cwd && sameCanonicalPath(cwd, this.projects.guard.root);
   }
 
   private async loadThreadHistory(threadId: string, initialPage?: JsonRecord): Promise<BoundedTurnHistory> {
@@ -1447,6 +1471,7 @@ export class CodexService {
 }
 
 export const __codexInternals = {
+  sameCanonicalPath,
   codexChildPathDirectories,
   codexSystemSearchDirectories,
   providerRuntimeConfiguration,

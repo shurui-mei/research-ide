@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,10 @@ import { LibreOfficeExecutableStore } from './libreoffice-executable-store';
 const temporaryRoots: string[] = [];
 
 async function fixture(): Promise<{ base: string; userData: string; project: string; executable: string }> {
-  const base = await mkdtemp(path.join(tmpdir(), 'research-ide-libreoffice-trust-'));
+  // macOS exposes its temporary root through /var even though /var resolves to
+  // /private/var. Use the canonical fixture root so ordinary fixture files do
+  // not accidentally exercise the explicit parent-symlink rejection below.
+  const base = await realpath(await mkdtemp(path.join(tmpdir(), 'research-ide-libreoffice-trust-')));
   temporaryRoots.push(base);
   const userData = path.join(base, 'user-data');
   const project = path.join(base, 'project');
