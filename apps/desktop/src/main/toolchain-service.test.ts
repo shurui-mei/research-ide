@@ -47,11 +47,11 @@ describe('automatic project toolchain detection', () => {
   });
 
   it('uses the deduplicated macOS search directories for child PATH without project directories', async () => {
-    const projectRoot = path.join(tmpdir(), 'research-ide-path-filter-project');
-    const projectBin = path.join(projectRoot, 'bin');
+    const projectRoot = '/Users/researcher/paper';
+    const projectBin = path.posix.join(projectRoot, 'bin');
     const directories = await toolchainInternals.childToolSearchDirectories(
       'darwin',
-      [projectBin, '/usr/bin', '/Library/TeX/texbin', '/usr/bin'].join(path.delimiter),
+      [projectBin, '/usr/bin', '/Library/TeX/texbin', '/usr/bin'].join(path.posix.delimiter),
       '/Library/TeX/texbin/latexmk',
       projectRoot,
     );
@@ -59,6 +59,24 @@ describe('automatic project toolchain detection', () => {
     expect(directories).toEqual(expect.arrayContaining(['/Library/TeX/texbin', '/opt/homebrew/bin', '/Library/Frameworks/R.framework/Resources/bin']));
     expect(directories.filter((directory) => directory === '/Library/TeX/texbin')).toHaveLength(1);
     expect(directories).not.toContain(projectBin);
+  });
+
+  it('uses Windows path syntax and case-insensitive deduplication when win32 is simulated', async () => {
+    const projectRoot = 'C:\\Users\\researcher\\paper';
+    const projectBin = path.win32.join(projectRoot, 'bin');
+    const toolDirectory = 'C:\\Research Tools\\bin';
+    const directories = await toolchainInternals.childToolSearchDirectories(
+      'win32',
+      [projectBin, toolDirectory.toLowerCase(), 'D:\\Python\\Scripts'].join(path.win32.delimiter),
+      path.win32.join(toolDirectory, 'python.exe'),
+      projectRoot,
+    );
+
+    expect(directories).toContain(toolDirectory);
+    expect(directories.filter((directory) => directory.toLowerCase() === toolDirectory.toLowerCase())).toHaveLength(1);
+    expect(directories).toContain('D:\\Python\\Scripts');
+    expect(directories).not.toContain(projectBin);
+    expect(directories.every((directory) => path.win32.isAbsolute(directory))).toBe(true);
   });
 
   it.skipIf(process.platform === 'win32')('lets a selected executable resolve a helper from its own directory', async () => {

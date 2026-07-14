@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,7 +7,10 @@ import { ManagedToolchainService, managedToolchainInternals } from './managed-to
 const roots: string[] = [];
 
 async function temporaryRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), 'research-ide-managed-tools-'));
+  // ManagedToolchainService persists canonical directory identities. Match
+  // fixture expectations to that namespace on macOS (/var -> /private/var)
+  // and on Windows hosts that expose a temporary root through an 8.3 alias.
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'research-ide-managed-tools-')));
   roots.push(root);
   return root;
 }

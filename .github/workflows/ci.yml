@@ -56,6 +56,10 @@ jobs:
 
       - name: Electron E2E (Linux)
         if: runner.os == 'Linux'
+        env:
+          # Unpacked CI artifacts cannot retain Electron's root:4755 SUID
+          # helper. Scope the fallback to the native-module smoke child only.
+          RESEARCH_IDE_E2E_NO_SANDBOX: '1'
         run: xvfb-run --auto-servernum pnpm e2e
 
       - name: Electron E2E

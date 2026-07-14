@@ -26,8 +26,20 @@ async function packagedExecutable(): Promise<string> {
 
 test('packaged executable loads its native SQLite runtime', async () => {
   const executable = await packagedExecutable();
+  const args = ['--research-ide-native-smoke'];
+  // GitHub's Linux runner cannot preserve Electron's required root:4755
+  // ownership for chrome-sandbox in an unpacked artifact. This opt-in affects
+  // only this headless native-module smoke-test child; packaged applications
+  // and the renderer-isolation E2E test continue to use Electron's sandbox.
+  if (
+    process.platform === 'linux'
+    && process.env.CI === 'true'
+    && process.env.RESEARCH_IDE_E2E_NO_SANDBOX === '1'
+  ) {
+    args.unshift('--no-sandbox');
+  }
   const result = await new Promise<{ code: number | null; stderr: string; stdout: string }>((resolve, reject) => {
-    const child = spawn(executable, ['--research-ide-native-smoke'], {
+    const child = spawn(executable, args, {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,10 @@ import { ProjectPathGuard, validateRelativePath } from './path-guard';
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(prefix: string): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), prefix));
+  // Keep fixture expectations in the same canonical namespace as
+  // ProjectPathGuard. This normalizes macOS /var -> /private/var and Windows
+  // long/8.3 aliases without weakening any production containment check.
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), prefix)));
   temporaryDirectories.push(directory);
   return directory;
 }

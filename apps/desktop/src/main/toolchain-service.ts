@@ -35,13 +35,14 @@ async function safeEnvironment(
   const allowed = ['PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'WINDIR', 'LANG', 'LC_ALL', 'PATHEXT', 'COMSPEC'];
   const env: NodeJS.ProcessEnv = {};
   for (const key of allowed) if (process.env[key] !== undefined) env[key] = process.env[key];
+  const platform = options.platform ?? process.platform;
   const directories = await childToolSearchDirectories(
-    options.platform ?? process.platform,
+    platform,
     options.pathValue ?? extra.PATH ?? process.env.PATH,
     options.executable,
     options.forbiddenRoot,
   );
-  return { ...env, ...extra, PATH: directories.join(path.delimiter) };
+  return { ...env, ...extra, PATH: directories.join(platformPath(platform).delimiter) };
 }
 
 async function capture(
@@ -97,14 +98,29 @@ async function sha256File(filePath: string): Promise<string> {
   });
 }
 
+function platformPath(platform: NodeJS.Platform): typeof path.posix {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
 function systemToolSearchDirectories(platform: NodeJS.Platform = process.platform, pathValue = process.env.PATH): string[] {
-  const inherited = (pathValue ?? '').split(path.delimiter);
+  const paths = platformPath(platform);
+  const inherited = (pathValue ?? '').split(paths.delimiter);
   const common = platform === 'darwin'
     ? ['/Library/TeX/texbin', '/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/Library/Frameworks/R.framework/Resources/bin', '/usr/bin', '/bin']
     : platform === 'linux'
       ? ['/usr/local/bin', '/usr/bin', '/bin', '/snap/bin']
       : [];
-  return [...new Set([...inherited, ...common].filter((directory) => directory && path.isAbsolute(directory)))];
+  const directories: string[] = [];
+  const seen = new Set<string>();
+  for (const directory of [...inherited, ...common]) {
+    if (!directory || !paths.isAbsolute(directory)) continue;
+    const normalized = paths.normalize(directory);
+    const key = platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    directories.push(normalized);
+  }
+  return directories;
 }
 
 async function childToolSearchDirectories(
@@ -113,16 +129,20 @@ async function childToolSearchDirectories(
   executable?: string,
   forbiddenRoot?: string,
 ): Promise<string[]> {
-  const root = forbiddenRoot ? await realpath(path.resolve(forbiddenRoot)).catch(() => path.resolve(forbiddenRoot)) : undefined;
-  const candidates = [executable ? path.dirname(executable) : undefined, ...systemToolSearchDirectories(platform, pathValue)];
+  const paths = platformPath(platform);
+  const rootLexical = forbiddenRoot ? paths.resolve(forbiddenRoot) : undefined;
+  const root = rootLexical && platform === process.platform
+    ? await realpath(rootLexical).catch(() => rootLexical)
+    : rootLexical;
+  const candidates = [executable ? paths.dirname(executable) : undefined, ...systemToolSearchDirectories(platform, pathValue)];
   const directories: string[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {
-    if (!candidate || !path.isAbsolute(candidate)) continue;
-    const lexical = path.resolve(candidate);
-    if (root && isInside(root, lexical)) continue;
-    const canonical = await realpath(lexical).catch(() => lexical);
-    if (root && isInside(root, canonical)) continue;
+    if (!candidate || !paths.isAbsolute(candidate)) continue;
+    const lexical = paths.resolve(candidate);
+    if (root && isInside(root, lexical, paths)) continue;
+    const canonical = platform === process.platform ? await realpath(lexical).catch(() => lexical) : lexical;
+    if (root && isInside(root, canonical, paths)) continue;
     const key = platform === 'win32' ? canonical.toLocaleLowerCase('en-US') : canonical;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -159,9 +179,9 @@ export interface PreparedManagedToolchainSelection {
   readonly projectSessionToken: string;
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+function isInside(root: string, candidate: string, paths: typeof path.posix = path): boolean {
+  const relative = paths.relative(root, candidate);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative));
 }
 
 async function assertExecutableFile(executablePath: string): Promise<string> {
